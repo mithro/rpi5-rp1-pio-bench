@@ -4,24 +4,23 @@
 
 # RP1 PIO Performance Exploration on Raspberry Pi 5
 
-Investigating DMA throughput between the BCM2712 ARM host and the RP1 southbridge's PIO block on the Raspberry Pi 5. The RP1 connects via PCIe 2.0 x4 and contains a PIO block similar to the RP2040 — same instruction set, 4 state machines, but with 8-deep FIFOs and a 200 MHz clock.
+The RP1 is the southbridge chip on the Raspberry Pi 5, connected to the BCM2712 ARM host via PCIe 2.0 x4. Among other peripherals, it contains a PIO block compatible with the RP2040 instruction set — 4 state machines, 200 MHz clock, and 8-deep FIFOs.
 
-## Repository Structure
-
-| Path | Description |
-|------|-------------|
-| [`hw.md`](hw.md) | Hardware setup — RPi5/RPi4 specs, Digilent Pmod HAT pin mapping, inter-device jumper connections |
-| [`rp1-dma.md`](rp1-dma.md) | Deep dive into RP1 DMA architecture, the 10 MB/s wall, and kernel optimisations |
-| [`rp1-dma-2.md`](rp1-dma-2.md) | RP1 PIO register map, DMA data path details, performance measurements, and code examples |
-| [`resources.md`](resources.md) | Curated collection of datasheets, source repos, PRs, and community projects |
-| [`benchmark/`](benchmark/) | PIO internal loopback benchmark source code and build system |
-| [`verify_pmod_connections.py`](verify_pmod_connections.py) | Tests GPIO jumper connections between RPi5 and RPi4 via Pmod HAT |
+This repository investigates how much DMA throughput is achievable between the ARM host and the RP1's PIO block, and documents the kernel patches that affect it.
 
 ## Benchmark
 
 Measures round-trip DMA throughput between the Raspberry Pi 5's ARM CPU and the RP1 southbridge's PIO block. Data flows from host memory through DMA to the PIO TX FIFO, gets transformed by a 3-instruction PIO program (bitwise NOT), and returns through the RX FIFO back to host memory.
 
-### Quick Start
+### Prerequisites
+
+- Raspberry Pi 5 (RPi4 is not supported — RP1 is specific to RPi5)
+- Kernel 6.12+ with both DMA patches applied:
+  - PR #6994 (2025-08): Heavy DMA channel reservation (~27 MB/s baseline)
+  - PR #7190 (2026-01): FIFO threshold fix (corrects data corruption)
+- Root access (`/dev/pio0` requires `sudo`)
+
+### Running the Benchmark
 
 **On RPi5:**
 
@@ -32,12 +31,21 @@ make benchmark
 sudo ./pio_loopback
 ```
 
+**Additional build targets:**
+
+```bash
+make check-deps     # Verify dependencies are installed
+make install-deps   # Install libpio-dev (requires sudo)
+```
+
 **Tests only (any platform):**
 
 ```bash
 cd benchmark
-make run-test
+make run-test       # Build and run portable test binary
 ```
+
+The test binary covers statistics, verification, and formatting — no hardware required.
 
 ### Architecture
 
@@ -73,9 +81,7 @@ Since `pio_sm_xfer_data()` is a blocking call, TX and RX DMA transfers run concu
 
 #### DMA Throughput Ceiling
 
-> **Units note:** The RP1 datasheet specifies bandwidth in **megabits per second
-> (Mbps)**. All throughput numbers in this document use **megabytes per second
-> (MB/s)** unless explicitly noted otherwise. 1 MB/s = 8 Mbps.
+All throughput values below are in MB/s (megabytes/s). The RP1 datasheet states bandwidth in Mbps (megabits/s); datasheet figures have been divided by 8.
 
 The RP1 contains an 8-channel Synopsys DesignWare AXI DMA controller:
 
@@ -97,7 +103,7 @@ The RP1 contains an 8-channel Synopsys DesignWare AXI DMA controller:
 
 ### Measured Results
 
-Actual output from `pio_loopback` on RPi5 hardware (kernel 6.12.47+rpt-rpi-2712):
+Sample output from `pio_loopback --iterations=20` on RPi5 (kernel 6.12.47+rpt-rpi-2712):
 
 ```
 ================================================================
@@ -144,7 +150,7 @@ Results are consistent across multiple runs (41.7–42.2 MB/s aggregate, 43.3–
 
 | Configuration | Throughput | Source |
 |--------------|-----------|--------|
-| Theoretical PIO internal | 266.7 MB/s | 200 MHz / 3 cycles * 4 bytes |
+| Theoretical PIO internal | 266.7 MB/s | 200 MHz clock, 3 cycles/word, 4 bytes/word |
 | Theoretical DMA ceiling | 62–75 MB/s | RP1 datasheet per-channel read bandwidth |
 | Direct M3 core access (unofficial) | ~66 MB/s | cleverca22's experiments (bypasses kernel) |
 | **This benchmark (loopback)** | **~42 MB/s** | **Concurrent TX+RX via pthreads** |
@@ -152,10 +158,10 @@ Results are consistent across multiple runs (41.7–42.2 MB/s aggregate, 43.3–
 | PIOLib DMA pre-optimisation | ~10.75 MB/s | Default burst, any channel |
 | `pio_sm_get_blocking()` (no DMA) | ~0.25 MB/s | PCIe + mailbox round-trip per word |
 
-The ~42 MB/s throughput significantly exceeds the previously documented ~27 MB/s. This is likely due to:
-1. Concurrent TX+RX transfers via pthreads overlapping DMA operations
-2. Updated kernel DMA optimisations (PR #6994 + #7190)
-3. Large transfer buffers (256 KB) amortising per-transfer overhead
+The ~42 MB/s aggregate throughput exceeds the previously documented ~27 MB/s for three reasons:
+1. Concurrent TX+RX transfers via pthreads allow DMA operations to overlap, roughly doubling effective throughput over single-direction measurements
+2. Updated kernel patches (PR #6994 and #7190) are present in kernel 6.12.47
+3. Large transfer buffers (256 KB) amortise per-transfer DMA overhead
 
 ### Command-Line Options
 
@@ -183,36 +189,6 @@ The ~42 MB/s throughput significantly exceeds the previously documented ~27 MB/s
 | DMA transfer failures | Another process using PIO, or kernel driver issue |
 | Permission denied | Need `sudo` to access `/dev/pio0` |
 
-### Prerequisites
-
-- Raspberry Pi 5 with RP1 southbridge
-- Kernel 6.12+ with DMA optimizations:
-  - PR #6994 (August 2025): Heavy DMA channel reservation
-  - PR #7190 (January 2026): FIFO threshold fix
-- `libpio-dev` package: `sudo apt install libpio-dev`
-- Root access for `/dev/pio0`
-
-### Building
-
-**Benchmark (RPi5 only):**
-
-```bash
-cd benchmark
-make benchmark      # Builds pio_loopback binary
-make check-deps     # Verify dependencies are installed
-make install-deps   # Install libpio-dev (requires sudo)
-```
-
-**Tests (any platform):**
-
-```bash
-cd benchmark
-make test           # Build test binary
-make run-test       # Build and run tests
-```
-
-The test binary tests all non-hardware logic (statistics, verification, formatting) and runs on x86 and arm without piolib.
-
 ### Benchmark Source Structure
 
 ```
@@ -229,9 +205,20 @@ benchmark/
 
 ## Hardware
 
-Two Raspberry Pi devices (RPi5 + RPi4) with Digilent Pmod HAT Adapters, connected via jumper cables across all three Pmod ports (JA, JB, JC — 21 unique GPIO connections).
+Two Raspberry Pi devices (RPi5 + RPi4) with Digilent Pmod HAT Adapters, connected via jumper cables across Pmod ports JA, JB, and JC (21 GPIO connections total). The RPi4 is used as a loopback target for the GPIO verification script; it is not involved in the PIO benchmark, which runs entirely on the RPi5.
 
-See [`hw.md`](hw.md) for complete pin mapping and connection details.
+See [`hw.md`](hw.md) for the full pin mapping.
+
+## Repository Structure
+
+| Path | Description |
+|------|-------------|
+| [`hw.md`](hw.md) | Hardware setup — RPi5/RPi4 specs, Digilent Pmod HAT pin mapping, inter-device jumper connections |
+| [`rp1-dma.md`](rp1-dma.md) | RP1 DMA architecture, the 10 MB/s throughput wall, and the kernel patches that address it |
+| [`rp1-dma-2.md`](rp1-dma-2.md) | RP1 PIO register map, DMA data path internals, performance measurements, and worked code examples |
+| [`resources.md`](resources.md) | Curated collection of datasheets, source repos, PRs, and community projects |
+| [`benchmark/`](benchmark/) | PIO internal loopback benchmark source code and build system |
+| [`verify_pmod_connections.py`](verify_pmod_connections.py) | Tests GPIO jumper connections between RPi5 and RPi4 via Pmod HAT |
 
 ## License
 
