@@ -1,0 +1,15 @@
+# Claude Code session data
+.claude/
+
+# Compiled objects and archives
+*.o
+*.a
+
+# Temporary files
+tmp/
+
+# Editor artifacts
+.*.swp
+*~
+.vscode/
+.idea/
