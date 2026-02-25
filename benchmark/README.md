@@ -1,3 +1,7 @@
+> **Note:** This document was generated with the assistance of AI tools
+> (Claude). Content should be independently verified before relying on it
+> for hardware decisions or production use.
+
 # RP1 PIO Internal Loopback Benchmark
 
 Measures round-trip DMA throughput between the Raspberry Pi 5's ARM CPU and the RP1 southbridge's PIO block. Data flows from host memory through DMA to the PIO TX FIFO, gets transformed by a 3-instruction PIO program (bitwise NOT), and returns through the RX FIFO back to host memory.
@@ -74,16 +78,64 @@ The RP1 contains an 8-channel Synopsys DesignWare AXI DMA controller:
 
 ### Measured Results (This Benchmark)
 
-| Metric | Value |
-|--------|-------|
-| Aggregate throughput | **~42 MB/s** |
-| Per-iteration mean | **~43.5 MB/s** |
-| Per-iteration stddev | **~0.1 MB/s** |
-| Data integrity | **0 errors** |
+Actual output from `pio_loopback` on RPi5 hardware (kernel 6.12.47+rpt-rpi-2712):
 
-The ~42-43 MB/s throughput significantly exceeds the previously documented ~27 MB/s. This is likely due to:
+```
+================================================================
+RP1 PIO Internal Loopback Benchmark
+================================================================
+
+Configuration:
+  Transfer size:     262144 bytes (256.0 KB)
+  Iterations:        20
+  PIO clock:         200 MHz (divider 1.0)
+  PIO program:       3 instructions (out x,32 / mov y,~x / in y,32)
+  DMA channels:      heavy (threshold=8, burst=8)
+  FIFO depth:        8 TX + 8 RX (unjoined)
+
+Results:
+  ----------------------------------------------------------------
+  Throughput (MB/s):
+    Aggregate:       42.20
+    Min:             43.38
+    Max:             43.69
+    Mean:            43.54
+    Median:          43.50
+    Std Dev:         0.11
+    P5:              43.38
+    P95:             43.69
+    P99:             43.69
+  ----------------------------------------------------------------
+  Data integrity:    PASS (0 errors in 5242880 bytes)
+  Total transferred: 5.00 MB in 0.118 s
+  ----------------------------------------------------------------
+
+Theoretical analysis:
+  PIO internal:      254.3 MB/s (200 MHz * 4 bytes / 3 cycles)
+  DMA ceiling:       ~27 MB/s (heavy channels, burst=8)
+  Achieved:          42.20 MB/s (156.3% of DMA ceiling)
+
+================================================================
+Verdict: PASS (42.20 MB/s >= 10.00 MB/s threshold)
+```
+
+Results are consistent across multiple runs (41.7–42.2 MB/s aggregate, 43.3–43.8 MB/s per-iteration mean), with zero data errors in all cases.
+
+### Performance Comparison
+
+| Configuration | Throughput | Source |
+|--------------|-----------|--------|
+| Theoretical PIO internal | 266.7 MB/s | 200 MHz / 3 cycles * 4 bytes |
+| Theoretical DMA ceiling | 62–75 MB/s | RP1 datasheet per-channel read bandwidth |
+| Direct M3 core access (unofficial) | ~66 MB/s | cleverca22's experiments (bypasses kernel) |
+| **This benchmark (loopback)** | **~42 MB/s** | **Concurrent TX+RX via pthreads** |
+| PIOLib DMA after PR #6994 | ~27 MB/s | Heavy channels, burst=8, single-direction |
+| PIOLib DMA pre-optimisation | ~10.75 MB/s | Default burst, any channel |
+| `pio_sm_get_blocking()` (no DMA) | ~0.25 MB/s | PCIe + mailbox round-trip per word |
+
+The ~42 MB/s throughput significantly exceeds the previously documented ~27 MB/s. This is likely due to:
 1. Concurrent TX+RX transfers via pthreads overlapping DMA operations
-2. Updated kernel DMA optimizations (PR #6994 + #7190)
+2. Updated kernel DMA optimisations (PR #6994 + #7190)
 3. Large transfer buffers (256 KB) amortising per-transfer overhead
 
 ## Command-Line Options
