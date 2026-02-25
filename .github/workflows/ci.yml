@@ -21,6 +21,12 @@ jobs:
         working-directory: benchmark
         run: make run-test
 
+      - name: Upload test binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark_test-x86_64
+          path: benchmark/benchmark_test
+
   test-arm:
     name: Test (aarch64)
     runs-on: ubuntu-24.04-arm
@@ -34,3 +40,35 @@ jobs:
       - name: Run tests
         working-directory: benchmark
         run: make run-test
+
+      - name: Upload test binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark_test-aarch64
+          path: benchmark/benchmark_test
+
+  build-benchmark:
+    name: Build benchmark (aarch64)
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Add Raspberry Pi apt repository
+        run: |
+          sudo mkdir -p /etc/apt/keyrings
+          curl -fsSL https://archive.raspberrypi.com/debian/raspberrypi.gpg.key | sudo gpg --dearmor -o /etc/apt/keyrings/raspberrypi-archive-keyring.gpg
+          echo "deb [signed-by=/etc/apt/keyrings/raspberrypi-archive-keyring.gpg] https://archive.raspberrypi.com/debian/ bookworm main" | sudo tee /etc/apt/sources.list.d/raspberrypi.list
+          sudo apt-get update
+
+      - name: Install libpio-dev
+        run: sudo apt-get install -y libpio-dev
+
+      - name: Build benchmark binary
+        working-directory: benchmark
+        run: make benchmark FORCE_BUILD=1
+
+      - name: Upload benchmark binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: pio_loopback-aarch64
+          path: benchmark/pio_loopback

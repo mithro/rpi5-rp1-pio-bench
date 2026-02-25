@@ -42,11 +42,14 @@ BENCH_LDFLAGS := -lpio -lpthread -lm
 benchmark: pio_loopback
 
 pio_loopback: $(BENCH_SRCS) loopback.pio.h benchmark_stats.h benchmark_verify.h benchmark_format.h
-ifeq ($(IS_RPI5),yes)
+ifeq ($(FORCE_BUILD),1)
+	$(CC) $(BENCH_CFLAGS) -o $@ $(BENCH_SRCS) $(BENCH_LDFLAGS)
+else ifeq ($(IS_RPI5),yes)
 	$(CC) $(BENCH_CFLAGS) -o $@ $(BENCH_SRCS) $(BENCH_LDFLAGS)
 else
 	@echo "ERROR: benchmark target requires RPi5 with /dev/pio0 and libpio-dev"
 	@echo "This machine does not appear to be an RPi5 (no /dev/pio0 found)."
+	@echo "Use FORCE_BUILD=1 to override (e.g., for cross-compilation in CI)."
 	@false
 endif
 
