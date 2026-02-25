@@ -58,15 +58,19 @@ Since `pio_sm_xfer_data()` is a blocking call, TX and RX DMA transfers run concu
 
 ### DMA Throughput Ceiling
 
+> **Units note:** The RP1 datasheet specifies bandwidth in **megabits per second
+> (Mbps)**. All throughput numbers in this document use **megabytes per second
+> (MB/s)** unless explicitly noted otherwise. 1 MB/s = 8 Mbps.
+
 The RP1 contains an 8-channel Synopsys DesignWare AXI DMA controller:
 
 - Internal AXI bus: 128-bit wide, 100 MHz = 1.6 GB/s raw
 - PIO FIFO interface: 32-bit wide → 75% DMA bandwidth wasted on padding
 - DMA handshake overhead: ~70 bus cycles per transfer
 - Heavy channels 0/1 support 8-beat bursts (32 bytes per burst)
-- RP1 datasheet per-channel read bandwidth: 500-600 Mbps
+- RP1 datasheet per-channel read bandwidth: 500–600 Mbps (62–75 MB/s)
 
-**Theoretical DMA ceiling:** ~62-75 MB/s per direction (from RP1 datasheet)
+**Theoretical DMA ceiling:** ~62–75 MB/s per direction (500–600 Mbps from RP1 datasheet ÷ 8)
 
 **Previous measured results (community):**
 

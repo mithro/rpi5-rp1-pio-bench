@@ -38,9 +38,9 @@ Host SDRAM ←→ BCM2712 PCIe Root Complex ←→ PCIe 2.0 x4 Link (2 GB/s)
         ←→ RP1 DMA Controller ←→ PIO FIFO (32-bit interface)
 ```
 
-The PCIe 2.0 x4 link provides **~16 Gbps effective bandwidth** (~2 GB/s) with **~320 ns to ~1 μs latency** per transaction. This is emphatically not the bottleneck — it has over 100× headroom for PIO transfers. The real constraints emerge inside RP1 itself.
+The PCIe 2.0 x4 link provides **~16 Gbps (gigabits/s) effective bandwidth** (~2 GB/s (gigabytes/s)) with **~320 ns to ~1 μs latency** per transaction. This is emphatically not the bottleneck — it has over 100× headroom for PIO transfers. The real constraints emerge inside RP1 itself.
 
-RP1's DMA controller connects to an **internal 128-bit AXI bus clocked at 100 MHz**, yielding 1.6 GB/s raw internal bandwidth. However, the PIO FIFO interface is only **32-bit wide**, meaning **75% of the DMA bus bandwidth is structurally wasted** on PIO transfers. The RP1 datasheet specifies typical per-channel read bandwidth of **500–600 Mbps** and write bandwidth of **2 Gbps**. For the 32-bit PIO path, this translates to a theoretical ceiling of roughly **62–75 MB/s per direction**.
+RP1's DMA controller connects to an **internal 128-bit AXI bus clocked at 100 MHz**, yielding 1.6 GB/s raw internal bandwidth. However, the PIO FIFO interface is only **32-bit wide**, meaning **75% of the DMA bus bandwidth is structurally wasted** on PIO transfers. The RP1 datasheet specifies typical per-channel read bandwidth of **500–600 Mbps (megabits/s)** and write bandwidth of **2 Gbps (gigabits/s)**. For the 32-bit PIO path, this translates to a theoretical ceiling of roughly **62–75 MB/s (megabytes/s)** per direction.
 
 The DMA controller has **heterogeneous channels**: channels 0 and 1 are "heavy" channels supporting **MSIZE=8** (8-beat bursts of 32 bits = 32 bytes per burst), while the remaining channels support only MSIZE=4 or less. This distinction proved to be the key performance differentiator, as detailed in the optimization section.
 

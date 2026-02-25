@@ -4,7 +4,7 @@ The Raspberry Pi 5's RP1 southbridge chip contains a PIO (Programmable I/O) bloc
 
 ## RP1's PIO block: half an RP2040, behind a PCIe wall
 
-RP1 is a custom ASIC fabricated on TSMC 40nm, containing dual Cortex-M3 cores, an 8-channel DMA controller, and a rich peripheral set including one PIO instance. It connects to the BCM2712 SoC via **PCIe 2.0 x4** (20 Gbps raw, ~2 GB/s effective after 8b/10b encoding, ~1 μs one-way latency). The chip is enumerated as `[1de4:0001] Raspberry Pi Ltd RP1 PCIe 2.0 South Bridge`.
+RP1 is a custom ASIC fabricated on TSMC 40nm, containing dual Cortex-M3 cores, an 8-channel DMA controller, and a rich peripheral set including one PIO instance. It connects to the BCM2712 SoC via **PCIe 2.0 x4** (20 Gbps (gigabits/s) raw, ~2 GB/s (gigabytes/s) effective after 8b/10b encoding, ~1 μs one-way latency). The chip is enumerated as `[1de4:0001] Raspberry Pi Ltd RP1 PCIe 2.0 South Bridge`.
 
 | Feature | RP2040 | RP1 |
 |---------|--------|-----|
@@ -242,10 +242,10 @@ The gap between PIO's internal bandwidth and achievable DMA throughput is stark.
 | `pio_sm_get_blocking()` (no DMA) | **~250 KB/s** | Each call round-trips through PCIe + mailbox |
 | PIOLib DMA (initial, default burst) | **~5–10 MB/s** | Pre-optimization, 4-beat DMA bursts |
 | PIOLib DMA (heavy channels, burst=8) | **~27 MB/s** | After PR #6994 reserving channels 0/1 |
-| Direct M3 core access (unofficial) | **~66 MB/s** | cleverca22's experiments; sample loss above 20 Mbit/s RX |
+| Direct M3 core access (unofficial) | **~66 MB/s** | cleverca22's experiments; sample loss above 20 Mbit/s (2.5 MB/s) RX |
 | 16-bit DAC output (fsphil) | **~10.8 MB/s** | 5.4 MS/s × 16-bit, with visible FIFO starvation pauses |
 
-The fundamental bottleneck was identified by Raspberry Pi engineer jdb: **"each DMA handshake cycle takes of the order of 70 bus cycles to complete"**. The 32-bit PIO FIFO sits on an APB bus, but the DMA engine has a 128-bit internal data bus — effectively wasting 75% of DMA bandwidth on padding. The datasheet-specified per-channel DMA read bandwidth of **500–600 Mbit/s** yields roughly `600 Mbit/s ÷ 4 ≈ 18.75 MB/s` effective for 32-bit peripheral transfers, aligning with the measured ~10–27 MB/s range.
+The fundamental bottleneck was identified by Raspberry Pi engineer jdb: **"each DMA handshake cycle takes of the order of 70 bus cycles to complete"**. The 32-bit PIO FIFO sits on an APB bus, but the DMA engine has a 128-bit internal data bus — effectively wasting 75% of DMA bandwidth on padding. The datasheet-specified per-channel DMA read bandwidth of **500–600 Mbit/s (megabits/s)** yields roughly `600 Mbit/s ÷ 4 (bus width waste) ÷ 8 (bits per byte) ≈ 18.75 MB/s (megabytes/s)` effective for 32-bit peripheral transfers, aligning with the measured ~10–27 MB/s range.
 
 To reach or exceed **10 MB/s**, the minimum PIO-side configuration is straightforward: any PIO clock above ~2.5 MHz with a single-instruction autopull program saturates the DMA path. The bottleneck is entirely on the DMA/PCIe side. Optimization strategies that help:
 
