@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test-x86:
+    name: Test (x86_64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build test binary
+        working-directory: benchmark
+        run: make test
+
+      - name: Run tests
+        working-directory: benchmark
+        run: make run-test
+
+  test-arm:
+    name: Test (aarch64)
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build test binary
+        working-directory: benchmark
+        run: make test
+
+      - name: Run tests
+        working-directory: benchmark
+        run: make run-test
