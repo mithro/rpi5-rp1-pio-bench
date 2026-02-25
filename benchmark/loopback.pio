@@ -1,0 +1,17 @@
+; loopback.pio — Internal loopback: TX FIFO → bitwise NOT → RX FIFO
+;
+; This program reads 32-bit words from the TX FIFO via autopull,
+; applies a bitwise NOT transformation, and writes the result to
+; the RX FIFO via autopush. No GPIO pins are used.
+;
+; At 200 MHz with 3 instructions per word:
+;   Internal throughput = 200 MHz / 3 = 66.7 Mwords/s = 266.7 MB/s
+;   (DMA is the bottleneck, not PIO — expect ~27 MB/s practical)
+
+.program loopback
+
+.wrap_target
+    out x, 32           ; autopull: TX FIFO → OSR → scratch X
+    mov y, ~x           ; bitwise NOT of X → Y
+    in y, 32            ; autopush: Y → ISR → RX FIFO
+.wrap
