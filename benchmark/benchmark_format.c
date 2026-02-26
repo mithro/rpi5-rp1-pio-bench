@@ -14,12 +14,14 @@ void bench_print_report(FILE *f, const bench_report_t *report)
         "  Iterations:        %zu\n"
         "  PIO clock:         200 MHz (divider 1.0)\n"
         "  PIO program:       3 instructions (out x,32 / mov y,~x / in y,32)\n"
-        "  DMA channels:      heavy (threshold=8, burst=8)\n"
+        "  Transfer mode:     %s\n"
         "  FIFO depth:        8 TX + 8 RX (unjoined)\n"
         "\n",
         report->transfer_size_bytes,
         (double)report->transfer_size_bytes / 1024.0,
-        report->num_iterations);
+        report->num_iterations,
+        report->transfer_mode ? report->transfer_mode
+                              : "DMA (threshold=8, priority=2)");
 
     fprintf(f,
         "Results:\n"
@@ -58,17 +60,18 @@ void bench_print_report(FILE *f, const bench_report_t *report)
 
     /* Theoretical analysis section. */
     double pio_internal_mbps = 200.0e6 / 3.0 * 4.0 / (1024.0 * 1024.0);
-    double dma_ceiling_mbps = 27.0;
-    double achieved_pct = (report->aggregate_throughput_mbps / dma_ceiling_mbps) * 100.0;
+    double ceiling = report->throughput_ceiling_mbps > 0.0
+        ? report->throughput_ceiling_mbps : 27.0;
+    double achieved_pct = (report->aggregate_throughput_mbps / ceiling) * 100.0;
 
     fprintf(f,
         "Theoretical analysis:\n"
         "  PIO internal:      %.1f MB/s (200 MHz * 4 bytes / 3 cycles)\n"
-        "  DMA ceiling:       ~%.0f MB/s (heavy channels, burst=8)\n"
-        "  Achieved:          %.2f MB/s (%.1f%% of DMA ceiling)\n"
+        "  Tput ceiling:      ~%.1f MB/s\n"
+        "  Achieved:          %.2f MB/s (%.1f%% of ceiling)\n"
         "\n",
         pio_internal_mbps,
-        dma_ceiling_mbps,
+        ceiling,
         report->aggregate_throughput_mbps,
         achieved_pct);
 
@@ -78,16 +81,40 @@ void bench_print_report(FILE *f, const bench_report_t *report)
 
 void bench_print_json(FILE *f, const bench_report_t *report)
 {
+    const char *mode_id = report->transfer_mode_id
+        ? report->transfer_mode_id : "dma";
+    int is_dma = (report->dma_threshold >= 0);
+    double ceiling = report->throughput_ceiling_mbps > 0.0
+        ? report->throughput_ceiling_mbps : 27.0;
+
     fprintf(f,
         "{\n"
         "  \"benchmark\": \"rp1-pio-loopback\",\n"
-        "  \"version\": \"1.0.0\",\n"
+        "  \"version\": \"1.1.0\",\n"
         "  \"config\": {\n"
         "    \"transfer_size_bytes\": %zu,\n"
         "    \"iterations\": %zu,\n"
         "    \"pio_clock_mhz\": 200,\n"
         "    \"pio_instructions\": 3,\n"
-        "    \"dma_threshold\": 8\n"
+        "    \"transfer_mode\": \"%s\",\n",
+        report->transfer_size_bytes,
+        report->num_iterations,
+        mode_id);
+
+    /* DMA fields: emit values for DMA mode, null for blocking. */
+    if (is_dma) {
+        fprintf(f,
+            "    \"dma_threshold\": %d,\n"
+            "    \"dma_priority\": %d,\n",
+            report->dma_threshold, report->dma_priority);
+    } else {
+        fprintf(f,
+            "    \"dma_threshold\": null,\n"
+            "    \"dma_priority\": null,\n");
+    }
+
+    fprintf(f,
+        "    \"throughput_ceiling_mbps\": %.1f\n"
         "  },\n"
         "  \"results\": {\n"
         "    \"throughput_mbps\": {\n"
@@ -111,8 +138,7 @@ void bench_print_json(FILE *f, const bench_report_t *report)
         "    \"achieved_mbps\": %.4f\n"
         "  }\n"
         "}\n",
-        report->transfer_size_bytes,
-        report->num_iterations,
+        ceiling,
         report->aggregate_throughput_mbps,
         report->throughput.min,
         report->throughput.max,
