@@ -115,7 +115,7 @@ Configuration:
   Iterations:        20
   PIO clock:         200 MHz (divider 1.0)
   PIO program:       3 instructions (out x,32 / mov y,~x / in y,32)
-  DMA channels:      heavy (threshold=8, burst=8)
+  Transfer mode:     DMA (threshold=8, priority=2)
   FIFO depth:        8 TX + 8 RX (unjoined)
 
 Results:
@@ -137,8 +137,8 @@ Results:
 
 Theoretical analysis:
   PIO internal:      254.3 MB/s (200 MHz * 4 bytes / 3 cycles)
-  DMA ceiling:       ~27 MB/s (heavy channels, burst=8)
-  Achieved:          42.20 MB/s (156.3% of DMA ceiling)
+  Tput ceiling:      ~27.0 MB/s
+  Achieved:          42.20 MB/s (156.3% of ceiling)
 
 ================================================================
 Verdict: PASS (42.20 MB/s >= 10.00 MB/s threshold)
@@ -166,14 +166,57 @@ The ~42 MB/s aggregate throughput exceeds the previously documented ~27 MB/s for
 ### Command-Line Options
 
 ```
---size=BYTES       Transfer size per iteration (default 262144 = 256 KB)
---iterations=N     Number of measured iterations (default 100)
---warmup=N         Warmup iterations before measurement (default 3)
---pattern=ID       Test pattern: 0=sequential, 1=ones, 2=alternating, 3=random
---threshold=MB/S   Pass/fail threshold in MB/s (default 10.0)
---json             Output machine-readable JSON instead of table
---no-verify        Skip data verification (pure throughput measurement)
---help             Show help
+--size=BYTES        Transfer size per iteration (default 262144 = 256 KB)
+--iterations=N      Number of measured iterations (default 100)
+--warmup=N          Warmup iterations before measurement (default 3)
+--pattern=ID        Test pattern: 0=sequential, 1=ones, 2=alternating, 3=random
+--threshold=MB/S    Pass/fail threshold in MB/s (default 10.0)
+--json              Output machine-readable JSON instead of table
+--no-verify         Skip data verification (pure throughput measurement)
+--mode=MODE         Transfer mode: dma or blocking (default dma)
+--dma-threshold=N   FIFO threshold 1-8, DMA mode only (default 8)
+--dma-priority=N    DMA priority 0-31, DMA mode only (default 2)
+--help              Show help
+```
+
+### Transfer Modes
+
+The benchmark supports two transfer modes:
+
+| Mode | Method | Throughput | Use case |
+|------|--------|-----------|----------|
+| `dma` (default) | `pio_sm_xfer_data()` via pthreads | ~42 MB/s | Production performance measurement |
+| `blocking` | `pio_sm_put_blocking()`/`pio_sm_get_blocking()` | ~0.2 MB/s | Baseline comparison without DMA |
+
+#### DMA parameters
+
+In DMA mode, the `--dma-threshold` and `--dma-priority` options control the RP1 PIO `dmactrl` register:
+
+| Bits | Field | CLI option | Description |
+|------|-------|-----------|-------------|
+| 31 | DREQ_EN | (always set) | Enable DMA request signal |
+| 11:7 | PRIORITY | `--dma-priority` | DMA priority (lower = faster) |
+| 4:0 | THRESHOLD | `--dma-threshold` | FIFO threshold (must match burst size) |
+
+**Warning:** Setting `--dma-threshold` to a value other than the kernel's DMA burst size (8 for heavy channels) may cause data corruption. See [PR #7190](https://github.com/raspberrypi/linux/pull/7190) for details.
+
+#### Example parameter sweeps
+
+```bash
+# Default DMA (baseline)
+sudo ./pio_loopback --iterations=20
+
+# Threshold sweep (varying FIFO threshold with burst=8)
+sudo ./pio_loopback --iterations=20 --dma-threshold=1
+sudo ./pio_loopback --iterations=20 --dma-threshold=4
+
+# Priority sweep
+sudo ./pio_loopback --iterations=20 --dma-priority=0
+sudo ./pio_loopback --iterations=20 --dma-priority=16
+sudo ./pio_loopback --iterations=20 --dma-priority=31
+
+# Blocking mode (use small size — ~0.2 MB/s is slow)
+sudo ./pio_loopback --mode=blocking --size=4096 --iterations=20
 ```
 
 ### Interpreting Results
