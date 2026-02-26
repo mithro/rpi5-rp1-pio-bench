@@ -1,6 +1,9 @@
 # Claude Code session data
 .claude/
 
+# Git worktrees
+.worktrees/
+
 # Compiled objects and archives
 *.o
 *.a
