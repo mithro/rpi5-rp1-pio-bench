@@ -84,6 +84,13 @@ void bench_build_report(const double *throughput_mbps, size_t count,
     out->total_elapsed_sec = total_elapsed_sec;
     out->data_errors = data_errors;
 
+    /* Transfer mode fields — caller sets these after bench_build_report(). */
+    out->transfer_mode = NULL;
+    out->transfer_mode_id = NULL;
+    out->dma_threshold = -1;
+    out->dma_priority = -1;
+    out->throughput_ceiling_mbps = 0.0;
+
     /* Aggregate throughput: total bytes / total wall time. */
     if (total_elapsed_sec > 0.0)
         out->aggregate_throughput_mbps =

@@ -31,6 +31,13 @@ typedef struct {
     size_t total_bytes_transferred;
     double total_elapsed_sec;
     uint32_t data_errors;
+
+    /* Transfer mode metadata (NULL/0/-1 = use formatter defaults). */
+    const char *transfer_mode;      /* human: "DMA (threshold=8, priority=2)" */
+    const char *transfer_mode_id;   /* machine: "dma" or "blocking" */
+    int dma_threshold;              /* -1 for blocking, 1-8 for DMA */
+    int dma_priority;               /* -1 for blocking, 0-31 for DMA */
+    double throughput_ceiling_mbps; /* theoretical ceiling for % calculation */
 } bench_report_t;
 
 /* Compute summary statistics from an array of double values.
