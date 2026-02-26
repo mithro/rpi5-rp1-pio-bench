@@ -67,7 +67,7 @@ void bench_print_report(FILE *f, const bench_report_t *report)
     fprintf(f,
         "Theoretical analysis:\n"
         "  PIO internal:      %.1f MB/s (200 MHz * 4 bytes / 3 cycles)\n"
-        "  Throughput ceiling: ~%.1f MB/s\n"
+        "  Tput ceiling:      ~%.1f MB/s\n"
         "  Achieved:          %.2f MB/s (%.1f%% of ceiling)\n"
         "\n",
         pio_internal_mbps,
@@ -81,6 +81,12 @@ void bench_print_report(FILE *f, const bench_report_t *report)
 
 void bench_print_json(FILE *f, const bench_report_t *report)
 {
+    const char *mode_id = report->transfer_mode_id
+        ? report->transfer_mode_id : "dma";
+    int is_dma = (report->dma_threshold >= 0);
+    double ceiling = report->throughput_ceiling_mbps > 0.0
+        ? report->throughput_ceiling_mbps : 27.0;
+
     fprintf(f,
         "{\n"
         "  \"benchmark\": \"rp1-pio-loopback\",\n"
@@ -90,9 +96,24 @@ void bench_print_json(FILE *f, const bench_report_t *report)
         "    \"iterations\": %zu,\n"
         "    \"pio_clock_mhz\": 200,\n"
         "    \"pio_instructions\": 3,\n"
-        "    \"transfer_mode\": \"%s\",\n"
-        "    \"dma_threshold\": %d,\n"
-        "    \"dma_priority\": %d,\n"
+        "    \"transfer_mode\": \"%s\",\n",
+        report->transfer_size_bytes,
+        report->num_iterations,
+        mode_id);
+
+    /* DMA fields: emit values for DMA mode, null for blocking. */
+    if (is_dma) {
+        fprintf(f,
+            "    \"dma_threshold\": %d,\n"
+            "    \"dma_priority\": %d,\n",
+            report->dma_threshold, report->dma_priority);
+    } else {
+        fprintf(f,
+            "    \"dma_threshold\": null,\n"
+            "    \"dma_priority\": null,\n");
+    }
+
+    fprintf(f,
         "    \"throughput_ceiling_mbps\": %.1f\n"
         "  },\n"
         "  \"results\": {\n"
@@ -117,13 +138,7 @@ void bench_print_json(FILE *f, const bench_report_t *report)
         "    \"achieved_mbps\": %.4f\n"
         "  }\n"
         "}\n",
-        report->transfer_size_bytes,
-        report->num_iterations,
-        report->transfer_mode_id ? report->transfer_mode_id : "dma",
-        report->dma_threshold >= 0 ? report->dma_threshold : 8,
-        report->dma_priority >= 0 ? report->dma_priority : 2,
-        report->throughput_ceiling_mbps > 0.0
-            ? report->throughput_ceiling_mbps : 27.0,
+        ceiling,
         report->aggregate_throughput_mbps,
         report->throughput.min,
         report->throughput.max,

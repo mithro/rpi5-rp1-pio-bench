@@ -339,8 +339,8 @@ static void test_format_report_mode_field(void)
                "report shows blocking mode label");
     ASSERT_MSG(strstr(buf, "Transfer mode:") != NULL,
                "report contains Transfer mode header");
-    ASSERT_MSG(strstr(buf, "0.4") != NULL,
-               "report uses blocking ceiling (0.4)");
+    ASSERT_MSG(strstr(buf, "~0.4 MB/s") != NULL,
+               "report uses blocking ceiling (0.4 MB/s)");
 }
 
 static void test_format_json_mode_field(void)
@@ -372,6 +372,57 @@ static void test_format_json_mode_field(void)
                "JSON contains throughput_ceiling_mbps");
     ASSERT_MSG(strstr(buf, "\"version\": \"1.1.0\"") != NULL,
                "JSON version is 1.1.0");
+}
+
+static void test_format_json_defaults(void)
+{
+    double throughputs[] = {15.0};
+    double scratch[1];
+    bench_report_t r;
+    bench_build_report(throughputs, 1, scratch, 65536, 1.0, 0, &r);
+    /* All mode fields left at sentinel values. */
+
+    char buf[4096];
+    FILE *f = fmemopen(buf, sizeof(buf), "w");
+    bench_print_json(f, &r);
+    fclose(f);
+
+    ASSERT_MSG(strstr(buf, "\"transfer_mode\": \"dma\"") != NULL,
+               "JSON default transfer_mode is dma");
+    ASSERT_MSG(strstr(buf, "\"dma_threshold\": null") != NULL,
+               "JSON default dma_threshold is null (unset)");
+    ASSERT_MSG(strstr(buf, "\"dma_priority\": null") != NULL,
+               "JSON default dma_priority is null (unset)");
+    ASSERT_MSG(strstr(buf, "\"throughput_ceiling_mbps\": 27.0") != NULL,
+               "JSON default ceiling is 27.0");
+}
+
+static void test_format_json_blocking_nulls(void)
+{
+    double throughputs[] = {0.15};
+    double scratch[1];
+    bench_report_t r;
+    bench_build_report(throughputs, 1, scratch, 4096, 1.0, 0, &r);
+
+    r.transfer_mode = "blocking put/get (no DMA)";
+    r.transfer_mode_id = "blocking";
+    r.dma_threshold = -1;
+    r.dma_priority = -1;
+    r.throughput_ceiling_mbps = 0.4;
+
+    char buf[4096];
+    FILE *f = fmemopen(buf, sizeof(buf), "w");
+    bench_print_json(f, &r);
+    fclose(f);
+
+    ASSERT_MSG(strstr(buf, "\"transfer_mode\": \"blocking\"") != NULL,
+               "JSON blocking mode has transfer_mode blocking");
+    ASSERT_MSG(strstr(buf, "\"dma_threshold\": null") != NULL,
+               "JSON blocking mode has null dma_threshold");
+    ASSERT_MSG(strstr(buf, "\"dma_priority\": null") != NULL,
+               "JSON blocking mode has null dma_priority");
+    ASSERT_MSG(strstr(buf, "\"throughput_ceiling_mbps\": 0.4") != NULL,
+               "JSON blocking mode has ceiling 0.4");
 }
 
 static void test_verdict_pass(void)
@@ -463,6 +514,8 @@ int main(void)
     RUN_TEST(test_format_json_structure);
     RUN_TEST(test_format_report_mode_field);
     RUN_TEST(test_format_json_mode_field);
+    RUN_TEST(test_format_json_defaults);
+    RUN_TEST(test_format_json_blocking_nulls);
     RUN_TEST(test_verdict_pass);
     RUN_TEST(test_verdict_fail_throughput);
     RUN_TEST(test_verdict_fail_errors);

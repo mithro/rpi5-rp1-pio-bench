@@ -32,12 +32,14 @@ typedef struct {
     double total_elapsed_sec;
     uint32_t data_errors;
 
-    /* Transfer mode metadata (NULL/0/-1 = use formatter defaults). */
-    const char *transfer_mode;      /* human: "DMA (threshold=8, priority=2)" */
-    const char *transfer_mode_id;   /* machine: "dma" or "blocking" */
-    int dma_threshold;              /* -1 for blocking, 1-8 for DMA */
-    int dma_priority;               /* -1 for blocking, 0-31 for DMA */
-    double throughput_ceiling_mbps; /* theoretical ceiling for % calculation */
+    /* Transfer mode metadata — caller sets after bench_build_report().
+     * Sentinel values (NULL/-1) mean "use formatter defaults".
+     * -1 also represents "not applicable" (e.g. DMA fields in blocking mode). */
+    const char *transfer_mode;      /* human label, NULL = "DMA (threshold=8, priority=2)" */
+    const char *transfer_mode_id;   /* "dma" or "blocking", NULL = "dma" */
+    int dma_threshold;              /* 1-8 for DMA, -1 = default or N/A */
+    int dma_priority;               /* 0-31 for DMA, -1 = default or N/A */
+    double throughput_ceiling_mbps; /* > 0 = use this, -1.0 = use formatter default */
 } bench_report_t;
 
 /* Compute summary statistics from an array of double values.
