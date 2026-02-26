@@ -316,6 +316,64 @@ static void test_format_json_structure(void)
                "JSON contains verdict key");
 }
 
+static void test_format_report_mode_field(void)
+{
+    double throughputs[] = {0.15, 0.18, 0.16};
+    double scratch[3];
+    bench_report_t r;
+    bench_build_report(throughputs, 3, scratch, 4096, 3.0, 0, &r);
+
+    /* Set blocking mode fields. */
+    r.transfer_mode = "blocking put/get (no DMA)";
+    r.transfer_mode_id = "blocking";
+    r.dma_threshold = -1;
+    r.dma_priority = -1;
+    r.throughput_ceiling_mbps = 0.4;
+
+    char buf[4096];
+    FILE *f = fmemopen(buf, sizeof(buf), "w");
+    bench_print_report(f, &r);
+    fclose(f);
+
+    ASSERT_MSG(strstr(buf, "blocking put/get (no DMA)") != NULL,
+               "report shows blocking mode label");
+    ASSERT_MSG(strstr(buf, "Transfer mode:") != NULL,
+               "report contains Transfer mode header");
+    ASSERT_MSG(strstr(buf, "0.4") != NULL,
+               "report uses blocking ceiling (0.4)");
+}
+
+static void test_format_json_mode_field(void)
+{
+    double throughputs[] = {30.0, 32.0};
+    double scratch[2];
+    bench_report_t r;
+    bench_build_report(throughputs, 2, scratch, 65536, 2.0, 0, &r);
+
+    /* Set DMA mode with custom threshold/priority. */
+    r.transfer_mode = "DMA (threshold=4, priority=0)";
+    r.transfer_mode_id = "dma";
+    r.dma_threshold = 4;
+    r.dma_priority = 0;
+    r.throughput_ceiling_mbps = 27.0;
+
+    char buf[4096];
+    FILE *f = fmemopen(buf, sizeof(buf), "w");
+    bench_print_json(f, &r);
+    fclose(f);
+
+    ASSERT_MSG(strstr(buf, "\"transfer_mode\": \"dma\"") != NULL,
+               "JSON contains transfer_mode dma");
+    ASSERT_MSG(strstr(buf, "\"dma_threshold\": 4") != NULL,
+               "JSON contains dma_threshold 4");
+    ASSERT_MSG(strstr(buf, "\"dma_priority\": 0") != NULL,
+               "JSON contains dma_priority 0");
+    ASSERT_MSG(strstr(buf, "\"throughput_ceiling_mbps\": 27.0") != NULL,
+               "JSON contains throughput_ceiling_mbps");
+    ASSERT_MSG(strstr(buf, "\"version\": \"1.1.0\"") != NULL,
+               "JSON version is 1.1.0");
+}
+
 static void test_verdict_pass(void)
 {
     /* 1 MB transfer in 0.0667 sec = 15.0 MB/s aggregate throughput. */
@@ -403,6 +461,8 @@ int main(void)
     fprintf(stderr, "\n=== Format tests ===\n");
     RUN_TEST(test_format_report_contains_fields);
     RUN_TEST(test_format_json_structure);
+    RUN_TEST(test_format_report_mode_field);
+    RUN_TEST(test_format_json_mode_field);
     RUN_TEST(test_verdict_pass);
     RUN_TEST(test_verdict_fail_throughput);
     RUN_TEST(test_verdict_fail_errors);
