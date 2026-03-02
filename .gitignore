@@ -8,6 +8,9 @@
 # Temporary files
 tmp/
 
+# Git worktrees
+.worktrees/
+
 # Editor artifacts
 .*.swp
 *~
