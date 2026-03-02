@@ -112,8 +112,15 @@ static int run_l0(PIO pio, int input_pin, int output_pin)
     sm_config_set_set_pins(&c, (uint)output_pin, 1);
     sm_config_set_clkdiv(&c, 1.0f);
 
-    /* Initialise and enable. */
+    /* Initialise state machine (does NOT enable yet). */
     pio_sm_init(pio, (uint)sm, offset, &c);
+
+    /* Force output pin LOW before enabling, to prevent a stale HIGH
+     * from being visible to the external observer before the PIO program
+     * has executed its first SET instruction. */
+    pio_sm_set_pins_with_mask(pio, (uint)sm, 0, 1u << (uint)output_pin);
+
+    /* Now enable. */
     pio_sm_set_enabled(pio, (uint)sm, true);
 
     fprintf(stderr,
@@ -121,21 +128,16 @@ static int run_l0(PIO pio, int input_pin, int output_pin)
         "    Press Ctrl-C to stop.\n",
         input_pin, output_pin);
 
-    /* Install signal handler and wait. */
-    struct sigaction sa;
-    memset(&sa, 0, sizeof(sa));
-    sa.sa_handler = sigint_handler;
-    sigemptyset(&sa.sa_mask);
-    sigaction(SIGINT, &sa, NULL);
-    sigaction(SIGTERM, &sa, NULL);
-
     while (g_running)
         pause();
 
     fprintf(stderr, "\nL0: Shutting down...\n");
 
-    /* Clean up. */
+    /* Clean up: disable SM, drive output LOW, set as input. */
     pio_sm_set_enabled(pio, (uint)sm, false);
+    pio_sm_set_pins_with_mask(pio, (uint)sm, 0, 1u << (uint)output_pin);
+    pio_sm_set_consecutive_pindirs(pio, (uint)sm, (uint)output_pin, 1, false);
+    pio_sm_set_consecutive_pindirs(pio, (uint)sm, (uint)input_pin, 1, false);
     pio_remove_program(pio, &gpio_echo_program, offset);
     pio_sm_unclaim(pio, (uint)sm);
 
@@ -187,25 +189,36 @@ static int run_l1(PIO pio, int input_pin, int output_pin,
     pio_gpio_init(pio, (uint)input_pin);
     pio_gpio_init(pio, (uint)output_pin);
 
-    /* Set pin directions. */
-    pio_sm_set_consecutive_pindirs(pio, (uint)sm_rx, (uint)input_pin, 1, false);
-    pio_sm_set_consecutive_pindirs(pio, (uint)sm_tx, (uint)output_pin, 1, true);
-
     /* Configure SM_RX (edge_detector). */
     pio_sm_config c_rx = edge_detector_program_get_default_config(offset_rx);
     sm_config_set_in_pins(&c_rx, (uint)input_pin);
     sm_config_set_in_shift(&c_rx, false, true, 32);  /* left shift, autopush, 32-bit */
     sm_config_set_clkdiv(&c_rx, 1.0f);
 
-    /* Configure SM_TX (output_driver). */
+    /* Configure SM_TX (output_driver).
+     * The output_driver program uses 'set pins' (not 'out pins') because
+     * RP1 PIO 'out pins' does not drive physical GPIO pads.  We still
+     * configure out_pins for the 'out x, 1' instruction that shifts FIFO
+     * data into scratch X, and set_pins for the 'set pins' that actually
+     * drives the output GPIO.  Autopull is DISABLED — the PIO program
+     * uses explicit 'pull block'. */
     pio_sm_config c_tx = output_driver_program_get_default_config(offset_tx);
     sm_config_set_out_pins(&c_tx, (uint)output_pin, 1);
-    sm_config_set_out_shift(&c_tx, true, true, 32);  /* right shift, autopull, 32-bit */
+    sm_config_set_set_pins(&c_tx, (uint)output_pin, 1);
+    sm_config_set_out_shift(&c_tx, true, false, 32);  /* right shift, NO autopull, 32-bit */
     sm_config_set_clkdiv(&c_tx, 1.0f);
 
-    /* Initialise both state machines. */
+    /* Initialise both state machines (applies config including pin mappings). */
     pio_sm_init(pio, (uint)sm_rx, offset_rx, &c_rx);
     pio_sm_init(pio, (uint)sm_tx, offset_tx, &c_tx);
+
+    /* Set pin directions AFTER init (which applies the config with correct
+     * set_base, so pio_sm_set_consecutive_pindirs targets the right pins). */
+    pio_sm_set_consecutive_pindirs(pio, (uint)sm_rx, (uint)input_pin, 1, false);
+    pio_sm_set_consecutive_pindirs(pio, (uint)sm_tx, (uint)output_pin, 1, true);
+
+    /* Force output pin LOW before enabling, to prevent a stale HIGH. */
+    pio_sm_set_pins_with_mask(pio, (uint)sm_tx, 0, 1u << (uint)output_pin);
 
     /* Enable both state machines. */
     pio_sm_set_enabled(pio, (uint)sm_rx, true);
@@ -230,21 +243,46 @@ static int run_l1(PIO pio, int input_pin, int output_pin,
     apply_cpu_affinity(cpu_affinity);
     lock_memory();
 
-    /* Warmup: read edges and echo, discarding timing. */
-    for (size_t i = 0; i < warmup; i++) {
-        uint32_t edge_val = pio_sm_get_blocking(pio, (uint)sm_rx);
+    /* Warmup: read edges and echo, discarding timing.
+     * Use non-blocking reads with a poll loop so that SIGINT/SIGTERM
+     * can interrupt us (blocking ioctl is not signal-interruptible).
+     *
+     * After each TX FIFO write, read back the FIFO level.  This PCIe
+     * read acts as a barrier, ensuring the posted write has reached the
+     * RP1 PIO block before we poll the RX FIFO again.  Without this,
+     * a tight spin on pio_sm_is_rx_fifo_empty() can outrace the posted
+     * write, preventing the output_driver from updating the pin. */
+    for (size_t i = 0; i < warmup && g_running; i++) {
+        while (pio_sm_is_rx_fifo_empty(pio, (uint)sm_rx)) {
+            if (!g_running) goto cleanup;
+        }
+        uint32_t edge_val = pio_sm_get(pio, (uint)sm_rx);
         pio_sm_put_blocking(pio, (uint)sm_tx, edge_val);
+        (void)pio_sm_get_tx_fifo_level(pio, (uint)sm_tx);
     }
+
+    if (!g_running) { ret = 1; goto cleanup; }
 
     fprintf(stderr, "    Warmup complete, measuring...\n");
 
-    /* Measured loop: time each get+put pair. */
-    for (size_t i = 0; i < iterations; i++) {
+    /* Measured loop: time each get+put pair.
+     * For measurement accuracy, we use a tight poll loop without
+     * signal checks — the measurement should be fast enough. */
+    for (size_t i = 0; i < iterations && g_running; i++) {
+        while (pio_sm_is_rx_fifo_empty(pio, (uint)sm_rx)) {
+            if (!g_running) goto cleanup;
+        }
         uint64_t t0 = get_time_ns();
-        uint32_t edge_val = pio_sm_get_blocking(pio, (uint)sm_rx);
+        uint32_t edge_val = pio_sm_get(pio, (uint)sm_rx);
         pio_sm_put_blocking(pio, (uint)sm_tx, edge_val);
         uint64_t t1 = get_time_ns();
         latencies[i] = (double)(t1 - t0);
+    }
+
+    if (!g_running) {
+        fprintf(stderr, "    Interrupted, %zu iterations completed.\n", iterations);
+        ret = 1;
+        goto cleanup;
     }
 
     fprintf(stderr, "    Measurement complete.\n");
@@ -274,6 +312,10 @@ cleanup:
     /* Disable and clean up state machines. */
     pio_sm_set_enabled(pio, (uint)sm_tx, false);
     pio_sm_set_enabled(pio, (uint)sm_rx, false);
+    /* Drive output LOW and set both pins as inputs before releasing. */
+    pio_sm_set_pins_with_mask(pio, (uint)sm_tx, 0, 1u << (uint)output_pin);
+    pio_sm_set_consecutive_pindirs(pio, (uint)sm_tx, (uint)output_pin, 1, false);
+    pio_sm_set_consecutive_pindirs(pio, (uint)sm_rx, (uint)input_pin, 1, false);
     pio_remove_program(pio, &output_driver_program, offset_tx);
     pio_remove_program(pio, &edge_detector_program, offset_rx);
     pio_sm_unclaim(pio, (uint)sm_tx);
@@ -401,6 +443,15 @@ int main(int argc, char **argv)
         fprintf(stderr, "ERROR: rt-priority must be 0-99\n");
         return 1;
     }
+
+    /* ─── Install signal handler for clean shutdown ─────────── */
+
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = sigint_handler;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGINT, &sa, NULL);
+    sigaction(SIGTERM, &sa, NULL);
 
     /* ─── Open PIO device ──────────────────────────────────── */
 
