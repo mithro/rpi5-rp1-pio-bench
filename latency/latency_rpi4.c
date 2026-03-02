@@ -341,6 +341,30 @@ int main(int argc, char **argv)
 
     int ret = 0;
 
+    /* ─── Pre-test sanity check ─────────────────────────────── */
+
+    /* Verify response pin is LOW before starting. If it's HIGH already,
+     * the RPi5 PIO output may be in a stale state from a previous run. */
+    if (gpio_read_level(response_pin)) {
+        fprintf(stderr,
+            "WARNING: response pin GPIO%d is already HIGH before test.\n"
+            "  This usually means the RPi5 PIO output pin was not cleaned\n"
+            "  up from a previous run. Waiting up to 2s for it to go LOW...\n",
+            response_pin);
+        uint64_t t_wait = get_time_ns();
+        while (gpio_read_level(response_pin)) {
+            if ((get_time_ns() - t_wait) > 2000000000ULL) {
+                fprintf(stderr,
+                    "ERROR: response pin GPIO%d still HIGH after 2s.\n"
+                    "  Ensure RPi5 PIO program is configured correctly.\n",
+                    response_pin);
+                ret = 1;
+                goto cleanup;
+            }
+        }
+        fprintf(stderr, "  Response pin went LOW, proceeding.\n");
+    }
+
     /* ─── Warmup iterations (with timeout) ─────────────────── */
 
     fprintf(stderr, "Running %d warmup iterations...\n", warmup);
