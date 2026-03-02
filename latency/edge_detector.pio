@@ -1,0 +1,19 @@
+; edge_detector.pio — Edge detector for CPU-in-the-loop latency tests (L1-L3)
+;
+; Watches input pin for rising/falling edges and pushes the new pin state
+; (1 or 0) to the RX FIFO via autopush. The CPU reads this value, processes
+; it, and writes the response to SM1's TX FIFO.
+;
+; Requires: autopush enabled, threshold = 32 bits
+; Pin mapping: in_base = input GPIO pin
+
+.program edge_detector
+
+.wrap_target
+    wait 1 pin 0        ; stall until input goes high
+    set x, 1             ; x = 1 (pin is now high)
+    in x, 32             ; autopush: ISR ← x, then push to RX FIFO
+    wait 0 pin 0        ; stall until input goes low
+    set x, 0             ; x = 0 (pin is now low)
+    in x, 32             ; autopush: ISR ← x, then push to RX FIFO
+.wrap

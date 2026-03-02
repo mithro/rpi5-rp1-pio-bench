@@ -1,0 +1,14 @@
+; output_driver.pio — FIFO-driven output for CPU-in-the-loop tests (L1-L3)
+;
+; Reads 1-bit values from the TX FIFO (via autopull) and drives the
+; output pin accordingly. Stalls when the TX FIFO is empty, waiting
+; for the CPU to write the next value.
+;
+; Requires: autopull enabled, threshold = 32 bits
+; Pin mapping: out_base = output GPIO pin, out_count = 1
+
+.program output_driver
+
+.wrap_target
+    out pins, 1          ; autopull: TX FIFO → OSR, then shift 1 bit → output pin
+.wrap

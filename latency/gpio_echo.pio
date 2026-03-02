@@ -1,0 +1,24 @@
+; gpio_echo.pio — PIO-only GPIO echo for latency measurement (L0)
+;
+; Monitors input pin (relative to in_base) and echoes its state to
+; output pin (relative to set_base) with minimum latency.
+;
+; Signal path: input pin → WAIT instruction → SET instruction → output pin
+;
+; Latency analysis at 200 MHz (5 ns per cycle):
+;   Input synchroniser: 2 cycles (10 ns) when enabled
+;   WAIT PIN extra stage: 1 cycle (5 ns) vs WAIT GPIO
+;   WAIT completes: 1 cycle (5 ns) when condition met
+;   SET executes: 1 cycle (5 ns)
+;   Output pad delay: ~2-5 ns
+;   Total (sync enabled): ~25-30 ns per edge
+;   Total (sync bypassed): ~15-20 ns per edge
+
+.program gpio_echo
+
+.wrap_target
+    wait 1 pin 0        ; stall until input pin goes high
+    set pins, 1          ; drive output pin high
+    wait 0 pin 0        ; stall until input pin goes low
+    set pins, 0          ; drive output pin low
+.wrap
