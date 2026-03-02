@@ -19,10 +19,10 @@
 static const uint16_t edge_detector_program_instructions[] = {
             //     .wrap_target
     0x20a0, //  0: wait   1 pin, 0
-    0xe021, //  1: set    x, 1
+    0xa02b, //  1: mov    x, ~null
     0x4020, //  2: in     x, 32
     0x2020, //  3: wait   0 pin, 0
-    0xe020, //  4: set    x, 0
+    0xa023, //  4: mov    x, null
     0x4020, //  5: in     x, 32
             //     .wrap
 };
