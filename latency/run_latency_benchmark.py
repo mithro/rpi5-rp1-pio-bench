@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """PIO Latency Benchmark — orchestrator script.
 
-Runs on the local (development) machine and coordinates L0/L1 latency
+Runs on the local (development) machine and coordinates L0/L1/L2/L3 latency
 tests between an RPi5 (PIO device-under-test) and an RPi4 (external
 stimulus/measurement device) via SSH.
 
 Typical usage:
     uv run latency/run_latency_benchmark.py
     uv run latency/run_latency_benchmark.py --tests L0
+    uv run latency/run_latency_benchmark.py --tests L0 L1 L2 L3
     uv run latency/run_latency_benchmark.py --iterations 5000 --json
 """
 
@@ -51,7 +52,7 @@ TEST_NAME_MAP = {
     "L0": "L0 (PIO-only echo)",
     "L1": "L1 (PIO -> ioctl -> PIO)",
     "L2": "L2 (PIO -> DMA -> poll -> PIO)",
-    "L3": "L3 (PIO -> mmap FIFO -> PIO)",
+    "L3": "L3 (batched DMA, 4KB reads)",
 }
 
 
@@ -245,7 +246,7 @@ def run_test(
     settle_secs: int,
     measurement_timeout: int,
 ) -> TestResult:
-    """Run a single latency test (L0 or L1).
+    """Run a single latency test (L0, L1, L2, or L3).
 
     1. Clean up any leftover state
     2. Start the RPi5 PIO program (background, via SSH)
@@ -279,9 +280,11 @@ def run_test(
     if test_mode != "L0":
         # RPi5 counts individual edges; RPi4 counts round-trips.
         # Each RPi4 iteration produces 2 edges (rising + falling).
-        # RPi5 needs enough budget for all RPi4 edges plus margin.
+        # RPi5 warmup consumes edges from RPi4 warmup, RPi5 measurement
+        # consumes edges from RPi4 measurement — they stay in sync because
+        # each RPi5 edge-read blocks until RPi4 sends the next stimulus.
         rpi5_warmup = warmup * 2
-        rpi5_iters = (warmup + iterations) * 2 + 100
+        rpi5_iters = iterations * 2
         rpi5_args += f" --iterations={rpi5_iters} --warmup={rpi5_warmup}"
 
     log(f"\n  Starting RPi5: sudo {rpi5_binary} {rpi5_args}")
@@ -361,10 +364,17 @@ def run_test(
     cleanup_pins(rpi5_host, rpi4_host, input_pin, output_pin)
 
     # Print per-test summary
+    _print_test_summary(result)
+
+    return result
+
+
+def _print_test_summary(result: TestResult) -> None:
+    """Print results summary for a single test."""
     if result.passed and result.json_data:
         stats = result.json_data.get("results", {}).get("round_trip_ns", {})
         if stats:
-            log(f"\n  Results for {test_mode}:")
+            log(f"\n  Results for {result.test_mode}:")
             log(f"    Min:    {stats.get('min', 0):>10.0f} ns")
             log(f"    Median: {stats.get('median', 0):>10.0f} ns")
             log(f"    Mean:   {stats.get('mean', 0):>10.1f} ns")
@@ -373,6 +383,66 @@ def run_test(
             log(f"    Max:    {stats.get('max', 0):>10.0f} ns")
     elif result.error:
         log(f"\n  FAILED: {result.error}")
+
+
+def run_test_standalone(
+    test_mode: str,
+    *,
+    rpi5_host: str,
+    remote_dir: str,
+    iterations: int,
+    warmup: int,
+    measurement_timeout: int,
+) -> TestResult:
+    """Run an RPi5-standalone test (no RPi4 involvement).
+
+    Used for L3 (batched DMA throughput) which uses an internal PIO
+    data generator and measures DMA read performance directly.
+    """
+    rpi5_binary = f"{remote_dir}/latency/latency_rpi5"
+
+    result = TestResult(test_mode=test_mode, passed=False, exit_code=1)
+
+    log(f"\n{'='*64}")
+    log(f"  {test_mode} Standalone Test ({iterations} iterations, {warmup} warmup)")
+    log(f"{'='*64}\n")
+
+    # Build RPi5 command — request JSON output, pass iterations directly
+    rpi5_args = (
+        f"--test={test_mode} --iterations={iterations} "
+        f"--warmup={warmup} --json"
+    )
+    rpi5_cmd = f"sudo {rpi5_binary} {rpi5_args}"
+    log(f"  Running RPi5: {rpi5_cmd}\n")
+
+    try:
+        rpi5_result = ssh_run(
+            rpi5_host, rpi5_cmd, timeout=measurement_timeout,
+        )
+        result.raw_output = rpi5_result.stdout
+        result.raw_stderr = rpi5_result.stderr
+        result.exit_code = rpi5_result.returncode
+
+        if rpi5_result.stderr:
+            for line in rpi5_result.stderr.strip().split("\n"):
+                log(f"  RPi5: {line}")
+
+        if rpi5_result.returncode != 0:
+            result.error = f"RPi5 standalone test failed (exit {rpi5_result.returncode})"
+        else:
+            try:
+                result.json_data = json.loads(rpi5_result.stdout)
+                result.passed = True
+            except json.JSONDecodeError as e:
+                result.error = f"Failed to parse RPi5 JSON output: {e}"
+                log(f"  ERROR: {result.error}")
+                log(f"  Raw output: {rpi5_result.stdout[:500]}")
+
+    except subprocess.TimeoutExpired:
+        result.error = f"RPi5 standalone test timed out ({measurement_timeout}s)"
+        log(f"  ERROR: {result.error}")
+
+    _print_test_summary(result)
 
     return result
 
@@ -443,6 +513,9 @@ examples:
   %(prog)s                        Run L0 and L1 tests with defaults
   %(prog)s --tests L0             Run only the L0 (PIO-only) test
   %(prog)s --tests L1             Run only the L1 (CPU-in-loop) test
+  %(prog)s --tests L2             Run only the L2 (DMA) test
+  %(prog)s --tests L3             Run only the L3 (mmap) test
+  %(prog)s --tests L0 L1 L2 L3   Run all four test layers
   %(prog)s --iterations 5000      Run with 5000 measurement iterations
   %(prog)s --json                 Output combined JSON results
   %(prog)s --no-build             Skip building (use existing binaries)
@@ -454,7 +527,7 @@ examples:
         "--tests",
         nargs="+",
         default=["L0", "L1"],
-        choices=["L0", "L1"],
+        choices=["L0", "L1", "L2", "L3"],
         help="Test modes to run (default: L0 L1)",
     )
     parser.add_argument(
@@ -527,14 +600,22 @@ def main() -> int:
     log(f"  Remote dir: {args.remote_dir}")
     log("=" * 64)
 
+    # Tests that require RPi4 (external stimulus/measurement)
+    STANDALONE_TESTS = {"L3"}
+    needs_rpi4 = bool(set(args.tests) - STANDALONE_TESTS)
+
     # Pre-flight: verify SSH connectivity
     log("\nChecking SSH connectivity...")
     rpi5_ok = ssh_check(args.rpi5_host, "RPi5")
-    rpi4_ok = ssh_check(args.rpi4_host, "RPi4")
-    if not (rpi5_ok and rpi4_ok):
-        log("ERROR: Cannot reach one or both hosts. Aborting.")
+    if not rpi5_ok:
+        log("ERROR: Cannot reach RPi5. Aborting.")
         return 1
-    log("  Both hosts reachable.\n")
+    if needs_rpi4:
+        rpi4_ok = ssh_check(args.rpi4_host, "RPi4")
+        if not rpi4_ok:
+            log("ERROR: Cannot reach RPi4. Aborting.")
+            return 1
+    log("  Hosts reachable.\n")
 
     # Determine local project root (parent of latency/)
     local_dir = Path(__file__).resolve().parent.parent
@@ -544,38 +625,50 @@ def main() -> int:
         log("Syncing source to remote hosts...")
         if not sync_source(local_dir, args.rpi5_host, args.remote_dir, "RPi5"):
             return 1
-        if not sync_source(local_dir, args.rpi4_host, args.remote_dir, "RPi4"):
-            return 1
+        if needs_rpi4:
+            if not sync_source(local_dir, args.rpi4_host, args.remote_dir, "RPi4"):
+                return 1
         log()
 
     # Build on each host
     if not args.no_build:
         log("Building binaries...")
-        if "L0" in args.tests or "L1" in args.tests:
-            if not deploy_and_build(args.rpi5_host, args.remote_dir, "rpi5", "RPi5"):
-                return 1
-        if not deploy_and_build(args.rpi4_host, args.remote_dir, "rpi4", "RPi4"):
+        if not deploy_and_build(args.rpi5_host, args.remote_dir, "rpi5", "RPi5"):
             return 1
+        if needs_rpi4:
+            if not deploy_and_build(args.rpi4_host, args.remote_dir, "rpi4", "RPi4"):
+                return 1
         log()
 
-    # Initial cleanup
-    cleanup_pins(args.rpi5_host, args.rpi4_host, args.input_pin, args.output_pin)
+    # Initial cleanup (only if using GPIO-based tests)
+    if needs_rpi4:
+        cleanup_pins(args.rpi5_host, args.rpi4_host, args.input_pin, args.output_pin)
 
     # Run each test
     results: list[TestResult] = []
     for test_mode in args.tests:
-        result = run_test(
-            test_mode,
-            rpi5_host=args.rpi5_host,
-            rpi4_host=args.rpi4_host,
-            remote_dir=args.remote_dir,
-            input_pin=args.input_pin,
-            output_pin=args.output_pin,
-            iterations=args.iterations,
-            warmup=args.warmup,
-            settle_secs=args.settle_secs,
-            measurement_timeout=args.measurement_timeout,
-        )
+        if test_mode in STANDALONE_TESTS:
+            result = run_test_standalone(
+                test_mode,
+                rpi5_host=args.rpi5_host,
+                remote_dir=args.remote_dir,
+                iterations=args.iterations,
+                warmup=args.warmup,
+                measurement_timeout=args.measurement_timeout,
+            )
+        else:
+            result = run_test(
+                test_mode,
+                rpi5_host=args.rpi5_host,
+                rpi4_host=args.rpi4_host,
+                remote_dir=args.remote_dir,
+                input_pin=args.input_pin,
+                output_pin=args.output_pin,
+                iterations=args.iterations,
+                warmup=args.warmup,
+                settle_secs=args.settle_secs,
+                measurement_timeout=args.measurement_timeout,
+            )
         results.append(result)
 
     # Print summary
