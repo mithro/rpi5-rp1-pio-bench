@@ -230,6 +230,7 @@ static void print_usage(const char *prog)
         "  --warmup=N         Warmup iterations with timeout (default %d)\n"
         "  --rt-priority=N    SCHED_FIFO priority 1-99 (default: off)\n"
         "  --cpu=N            CPU affinity (default: no affinity)\n"
+        "  --test-layer=N     Test layer for report (0-3, default: 0)\n"
         "  --json             Output JSON instead of human-readable\n"
         "  --help             Show this help\n",
         prog,
@@ -249,6 +250,7 @@ int main(int argc, char **argv)
     int rt_priority = 0;
     int cpu_affinity = -1;
     int json_output = 0;
+    int test_layer = TEST_L0;
 
     /* Parse command-line options */
     static struct option long_options[] = {
@@ -258,13 +260,14 @@ int main(int argc, char **argv)
         {"warmup",       required_argument, NULL, 'w'},
         {"rt-priority",  required_argument, NULL, 'r'},
         {"cpu",          required_argument, NULL, 'c'},
+        {"test-layer",   required_argument, NULL, 'T'},
         {"json",         no_argument,       NULL, 'j'},
         {"help",         no_argument,       NULL, 'h'},
         {NULL, 0, NULL, 0}
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "S:R:i:w:r:c:jh",
+    while ((opt = getopt_long(argc, argv, "S:R:i:w:r:c:T:jh",
                               long_options, NULL)) != -1) {
         switch (opt) {
         case 'S': stimulus_pin = atoi(optarg); break;
@@ -273,6 +276,7 @@ int main(int argc, char **argv)
         case 'w': warmup = atoi(optarg); break;
         case 'r': rt_priority = atoi(optarg); break;
         case 'c': cpu_affinity = atoi(optarg); break;
+        case 'T': test_layer = atoi(optarg); break;
         case 'j': json_output = 1; break;
         case 'h':
         default:
@@ -420,16 +424,20 @@ int main(int argc, char **argv)
 
     for (int i = 0; i < iterations && running; i++) {
         uint64_t t_start, t_end;
+        unsigned spins;
 
         /* Rising edge measurement:
          * Drive stimulus HIGH, busy-poll for response HIGH, record time. */
         t_start = get_time_ns();
         gpio_set_high(stimulus_pin);
 
+        spins = 0;
         while (!gpio_read_level(response_pin)) {
-            /* Tight busy-poll — no timeout check for accuracy */
+            if (!(++spins & 0xFFFF) && !running) break;
         }
         t_end = get_time_ns();
+
+        if (!running) break;
 
         latencies[i] = (double)(t_end - t_start);
 
@@ -437,8 +445,9 @@ int main(int argc, char **argv)
          * We don't time this — only the rising edge matters. */
         gpio_set_low(stimulus_pin);
 
+        spins = 0;
         while (gpio_read_level(response_pin)) {
-            /* Tight busy-poll */
+            if (!(++spins & 0xFFFF) && !running) break;
         }
     }
 
@@ -463,13 +472,14 @@ int main(int argc, char **argv)
     bench_compute_stats(latencies, (size_t)iterations, scratch,
                         &report.latency_ns);
 
-    report.test_layer = TEST_L0;
+    report.test_layer = test_layer;
     report.stimulus_pin = stimulus_pin;
     report.response_pin = response_pin;
     report.num_iterations = (size_t)iterations;
     report.num_warmup = (size_t)warmup;
     report.rt_priority = rt_priority;
     report.cpu_affinity = cpu_affinity;
+    report.timing_label = "Round-trip latency";
 
     if (json_output)
         latency_print_json(stdout, &report);

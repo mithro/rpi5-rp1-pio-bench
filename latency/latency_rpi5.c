@@ -145,6 +145,104 @@ static int run_l0(PIO pio, int input_pin, int output_pin)
     return 0;
 }
 
+/* ─── Shared setup for L1/L2 edge-echo state machines ────── */
+
+/* Holds the two SMs and program offsets used by both L1 and L2.
+ * Callers must enable the SMs themselves (L2 needs DMA config first). */
+typedef struct {
+    int sm_rx;          /* edge_detector state machine */
+    int sm_tx;          /* output_driver state machine */
+    uint offset_rx;     /* instruction memory offset for edge_detector */
+    uint offset_tx;     /* instruction memory offset for output_driver */
+} edge_echo_sms_t;
+
+/* Claim two SMs, load edge_detector + output_driver programs, configure
+ * pin mappings and shift registers, init both SMs, set pin directions,
+ * and force output LOW.  Does NOT enable SMs (caller does that).
+ * Returns 0 on success, -1 on failure (partial resources cleaned up). */
+static int setup_edge_echo_sms(PIO pio, int input_pin, int output_pin,
+                                edge_echo_sms_t *out)
+{
+    out->sm_rx = pio_claim_unused_sm(pio, true);
+    if (out->sm_rx < 0) {
+        fprintf(stderr, "ERROR: no free state machine for edge_detector\n");
+        return -1;
+    }
+
+    out->sm_tx = pio_claim_unused_sm(pio, true);
+    if (out->sm_tx < 0) {
+        fprintf(stderr, "ERROR: no free state machine for output_driver\n");
+        pio_sm_unclaim(pio, (uint)out->sm_rx);
+        return -1;
+    }
+
+    out->offset_rx = pio_add_program(pio, &edge_detector_program);
+    if (out->offset_rx == PIO_ORIGIN_INVALID) {
+        fprintf(stderr, "ERROR: failed to load edge_detector program\n");
+        pio_sm_unclaim(pio, (uint)out->sm_tx);
+        pio_sm_unclaim(pio, (uint)out->sm_rx);
+        return -1;
+    }
+
+    out->offset_tx = pio_add_program(pio, &output_driver_program);
+    if (out->offset_tx == PIO_ORIGIN_INVALID) {
+        fprintf(stderr, "ERROR: failed to load output_driver program\n");
+        pio_remove_program(pio, &edge_detector_program, out->offset_rx);
+        pio_sm_unclaim(pio, (uint)out->sm_tx);
+        pio_sm_unclaim(pio, (uint)out->sm_rx);
+        return -1;
+    }
+
+    /* Configure GPIOs for PIO function. */
+    pio_gpio_init(pio, (uint)input_pin);
+    pio_gpio_init(pio, (uint)output_pin);
+
+    /* Configure SM_RX (edge_detector): autopush at 32 bits. */
+    pio_sm_config c_rx = edge_detector_program_get_default_config(out->offset_rx);
+    sm_config_set_in_pins(&c_rx, (uint)input_pin);
+    sm_config_set_in_shift(&c_rx, false, true, 32);
+    sm_config_set_clkdiv(&c_rx, 1.0f);
+
+    /* Configure SM_TX (output_driver).
+     * Uses 'set pins' (not 'out pins') because RP1 PIO 'out pins' does
+     * not drive physical GPIO pads.  Autopull DISABLED — the PIO program
+     * uses explicit 'pull block'. */
+    pio_sm_config c_tx = output_driver_program_get_default_config(out->offset_tx);
+    sm_config_set_out_pins(&c_tx, (uint)output_pin, 1);
+    sm_config_set_set_pins(&c_tx, (uint)output_pin, 1);
+    sm_config_set_out_shift(&c_tx, true, false, 32);
+    sm_config_set_clkdiv(&c_tx, 1.0f);
+
+    /* Initialise both state machines. */
+    pio_sm_init(pio, (uint)out->sm_rx, out->offset_rx, &c_rx);
+    pio_sm_init(pio, (uint)out->sm_tx, out->offset_tx, &c_tx);
+
+    /* Set pin directions AFTER init. */
+    pio_sm_set_consecutive_pindirs(pio, (uint)out->sm_rx, (uint)input_pin, 1, false);
+    pio_sm_set_consecutive_pindirs(pio, (uint)out->sm_tx, (uint)output_pin, 1, true);
+
+    /* Force output pin LOW before enabling. */
+    pio_sm_set_pins_with_mask(pio, (uint)out->sm_tx, 0, 1u << (uint)output_pin);
+
+    return 0;
+}
+
+/* Disable SMs, drive output LOW, restore pins as inputs, remove programs,
+ * and unclaim state machines.  Safe to call even if SMs were never enabled. */
+static void cleanup_edge_echo_sms(PIO pio, int input_pin, int output_pin,
+                                   const edge_echo_sms_t *sms)
+{
+    pio_sm_set_enabled(pio, (uint)sms->sm_tx, false);
+    pio_sm_set_enabled(pio, (uint)sms->sm_rx, false);
+    pio_sm_set_pins_with_mask(pio, (uint)sms->sm_tx, 0, 1u << (uint)output_pin);
+    pio_sm_set_consecutive_pindirs(pio, (uint)sms->sm_tx, (uint)output_pin, 1, false);
+    pio_sm_set_consecutive_pindirs(pio, (uint)sms->sm_rx, (uint)input_pin, 1, false);
+    pio_remove_program(pio, &output_driver_program, sms->offset_tx);
+    pio_remove_program(pio, &edge_detector_program, sms->offset_rx);
+    pio_sm_unclaim(pio, (uint)sms->sm_tx);
+    pio_sm_unclaim(pio, (uint)sms->sm_rx);
+}
+
 /* ─── L1: PIO -> ioctl -> PIO ──────────────────────────────── */
 
 static int run_l1(PIO pio, int input_pin, int output_pin,
@@ -153,73 +251,13 @@ static int run_l1(PIO pio, int input_pin, int output_pin,
 {
     int ret = 0;
 
-    /* Claim two state machines: one for RX (edge detector), one for TX (output driver). */
-    int sm_rx = pio_claim_unused_sm(pio, true);
-    if (sm_rx < 0) {
-        fprintf(stderr, "ERROR: no free state machine for edge_detector\n");
+    /* Set up edge-detector (RX) and output-driver (TX) state machines. */
+    edge_echo_sms_t sms;
+    if (setup_edge_echo_sms(pio, input_pin, output_pin, &sms) < 0)
         return 1;
-    }
 
-    int sm_tx = pio_claim_unused_sm(pio, true);
-    if (sm_tx < 0) {
-        fprintf(stderr, "ERROR: no free state machine for output_driver\n");
-        pio_sm_unclaim(pio, (uint)sm_rx);
-        return 1;
-    }
-
-    /* Load edge_detector program. */
-    uint offset_rx = pio_add_program(pio, &edge_detector_program);
-    if (offset_rx == PIO_ORIGIN_INVALID) {
-        fprintf(stderr, "ERROR: failed to load edge_detector program\n");
-        pio_sm_unclaim(pio, (uint)sm_tx);
-        pio_sm_unclaim(pio, (uint)sm_rx);
-        return 1;
-    }
-
-    /* Load output_driver program. */
-    uint offset_tx = pio_add_program(pio, &output_driver_program);
-    if (offset_tx == PIO_ORIGIN_INVALID) {
-        fprintf(stderr, "ERROR: failed to load output_driver program\n");
-        pio_remove_program(pio, &edge_detector_program, offset_rx);
-        pio_sm_unclaim(pio, (uint)sm_tx);
-        pio_sm_unclaim(pio, (uint)sm_rx);
-        return 1;
-    }
-
-    /* Configure GPIOs for PIO function. */
-    pio_gpio_init(pio, (uint)input_pin);
-    pio_gpio_init(pio, (uint)output_pin);
-
-    /* Configure SM_RX (edge_detector). */
-    pio_sm_config c_rx = edge_detector_program_get_default_config(offset_rx);
-    sm_config_set_in_pins(&c_rx, (uint)input_pin);
-    sm_config_set_in_shift(&c_rx, false, true, 32);  /* left shift, autopush, 32-bit */
-    sm_config_set_clkdiv(&c_rx, 1.0f);
-
-    /* Configure SM_TX (output_driver).
-     * The output_driver program uses 'set pins' (not 'out pins') because
-     * RP1 PIO 'out pins' does not drive physical GPIO pads.  We still
-     * configure out_pins for the 'out x, 1' instruction that shifts FIFO
-     * data into scratch X, and set_pins for the 'set pins' that actually
-     * drives the output GPIO.  Autopull is DISABLED — the PIO program
-     * uses explicit 'pull block'. */
-    pio_sm_config c_tx = output_driver_program_get_default_config(offset_tx);
-    sm_config_set_out_pins(&c_tx, (uint)output_pin, 1);
-    sm_config_set_set_pins(&c_tx, (uint)output_pin, 1);
-    sm_config_set_out_shift(&c_tx, true, false, 32);  /* right shift, NO autopull, 32-bit */
-    sm_config_set_clkdiv(&c_tx, 1.0f);
-
-    /* Initialise both state machines (applies config including pin mappings). */
-    pio_sm_init(pio, (uint)sm_rx, offset_rx, &c_rx);
-    pio_sm_init(pio, (uint)sm_tx, offset_tx, &c_tx);
-
-    /* Set pin directions AFTER init (which applies the config with correct
-     * set_base, so pio_sm_set_consecutive_pindirs targets the right pins). */
-    pio_sm_set_consecutive_pindirs(pio, (uint)sm_rx, (uint)input_pin, 1, false);
-    pio_sm_set_consecutive_pindirs(pio, (uint)sm_tx, (uint)output_pin, 1, true);
-
-    /* Force output pin LOW before enabling, to prevent a stale HIGH. */
-    pio_sm_set_pins_with_mask(pio, (uint)sm_tx, 0, 1u << (uint)output_pin);
+    int sm_rx = sms.sm_rx;
+    int sm_tx = sms.sm_tx;
 
     /* Enable both state machines. */
     pio_sm_set_enabled(pio, (uint)sm_rx, true);
@@ -298,6 +336,7 @@ static int run_l1(PIO pio, int input_pin, int output_pin,
     report.num_warmup = warmup;
     report.rt_priority = rt_priority;
     report.cpu_affinity = cpu_affinity;
+    report.timing_label = "Ioctl processing time";
 
     bench_compute_stats(latencies, iterations, scratch, &report.latency_ns);
 
@@ -310,17 +349,7 @@ cleanup:
     free(latencies);
     free(scratch);
 
-    /* Disable and clean up state machines. */
-    pio_sm_set_enabled(pio, (uint)sm_tx, false);
-    pio_sm_set_enabled(pio, (uint)sm_rx, false);
-    /* Drive output LOW and set both pins as inputs before releasing. */
-    pio_sm_set_pins_with_mask(pio, (uint)sm_tx, 0, 1u << (uint)output_pin);
-    pio_sm_set_consecutive_pindirs(pio, (uint)sm_tx, (uint)output_pin, 1, false);
-    pio_sm_set_consecutive_pindirs(pio, (uint)sm_rx, (uint)input_pin, 1, false);
-    pio_remove_program(pio, &output_driver_program, offset_tx);
-    pio_remove_program(pio, &edge_detector_program, offset_rx);
-    pio_sm_unclaim(pio, (uint)sm_tx);
-    pio_sm_unclaim(pio, (uint)sm_rx);
+    cleanup_edge_echo_sms(pio, input_pin, output_pin, &sms);
 
     return ret;
 }
@@ -335,58 +364,13 @@ static int run_l2(PIO pio, int input_pin, int output_pin,
     double *latencies = NULL;
     double *scratch = NULL;
 
-    /* ── SM setup (identical to L1) ───────────────────────── */
-
-    int sm_rx = pio_claim_unused_sm(pio, true);
-    if (sm_rx < 0) {
-        fprintf(stderr, "ERROR: no free state machine for edge_detector\n");
+    /* Set up edge-detector (RX) and output-driver (TX) state machines. */
+    edge_echo_sms_t sms;
+    if (setup_edge_echo_sms(pio, input_pin, output_pin, &sms) < 0)
         return 1;
-    }
 
-    int sm_tx = pio_claim_unused_sm(pio, true);
-    if (sm_tx < 0) {
-        fprintf(stderr, "ERROR: no free state machine for output_driver\n");
-        pio_sm_unclaim(pio, (uint)sm_rx);
-        return 1;
-    }
-
-    uint offset_rx = pio_add_program(pio, &edge_detector_program);
-    if (offset_rx == PIO_ORIGIN_INVALID) {
-        fprintf(stderr, "ERROR: failed to load edge_detector program\n");
-        pio_sm_unclaim(pio, (uint)sm_tx);
-        pio_sm_unclaim(pio, (uint)sm_rx);
-        return 1;
-    }
-
-    uint offset_tx = pio_add_program(pio, &output_driver_program);
-    if (offset_tx == PIO_ORIGIN_INVALID) {
-        fprintf(stderr, "ERROR: failed to load output_driver program\n");
-        pio_remove_program(pio, &edge_detector_program, offset_rx);
-        pio_sm_unclaim(pio, (uint)sm_tx);
-        pio_sm_unclaim(pio, (uint)sm_rx);
-        return 1;
-    }
-
-    pio_gpio_init(pio, (uint)input_pin);
-    pio_gpio_init(pio, (uint)output_pin);
-
-    pio_sm_config c_rx = edge_detector_program_get_default_config(offset_rx);
-    sm_config_set_in_pins(&c_rx, (uint)input_pin);
-    sm_config_set_in_shift(&c_rx, false, true, 32);
-    sm_config_set_clkdiv(&c_rx, 1.0f);
-
-    pio_sm_config c_tx = output_driver_program_get_default_config(offset_tx);
-    sm_config_set_out_pins(&c_tx, (uint)output_pin, 1);
-    sm_config_set_set_pins(&c_tx, (uint)output_pin, 1);
-    sm_config_set_out_shift(&c_tx, true, false, 32);
-    sm_config_set_clkdiv(&c_tx, 1.0f);
-
-    pio_sm_init(pio, (uint)sm_rx, offset_rx, &c_rx);
-    pio_sm_init(pio, (uint)sm_tx, offset_tx, &c_tx);
-
-    pio_sm_set_consecutive_pindirs(pio, (uint)sm_rx, (uint)input_pin, 1, false);
-    pio_sm_set_consecutive_pindirs(pio, (uint)sm_tx, (uint)output_pin, 1, true);
-    pio_sm_set_pins_with_mask(pio, (uint)sm_tx, 0, 1u << (uint)output_pin);
+    int sm_rx = sms.sm_rx;
+    int sm_tx = sms.sm_tx;
 
     /* ── Configure DMA for single-word transfers ──────────── */
 
@@ -513,6 +497,7 @@ static int run_l2(PIO pio, int input_pin, int output_pin,
     report.num_warmup = warmup;
     report.rt_priority = rt_priority;
     report.cpu_affinity = cpu_affinity;
+    report.timing_label = "DMA processing time";
 
     bench_compute_stats(latencies, iterations, scratch, &report.latency_ns);
 
@@ -525,16 +510,7 @@ cleanup:
     free(latencies);
     free(scratch);
 
-    /* Disable and clean up state machines (same as L1). */
-    pio_sm_set_enabled(pio, (uint)sm_tx, false);
-    pio_sm_set_enabled(pio, (uint)sm_rx, false);
-    pio_sm_set_pins_with_mask(pio, (uint)sm_tx, 0, 1u << (uint)output_pin);
-    pio_sm_set_consecutive_pindirs(pio, (uint)sm_tx, (uint)output_pin, 1, false);
-    pio_sm_set_consecutive_pindirs(pio, (uint)sm_rx, (uint)input_pin, 1, false);
-    pio_remove_program(pio, &output_driver_program, offset_tx);
-    pio_remove_program(pio, &edge_detector_program, offset_rx);
-    pio_sm_unclaim(pio, (uint)sm_tx);
-    pio_sm_unclaim(pio, (uint)sm_rx);
+    cleanup_edge_echo_sms(pio, input_pin, output_pin, &sms);
 
     return ret;
 }
@@ -626,8 +602,14 @@ static int run_l3(PIO pio, int input_pin, int output_pin,
     /* ── Warmup: run DMA reads to prime the path ──────────── */
 
     for (size_t i = 0; i < warmup && g_running; i++) {
-        pio_sm_xfer_data(pio, (uint)sm, PIO_DIR_FROM_SM,
-                         L3_BATCH_SIZE, rx_buf);
+        int rc = pio_sm_xfer_data(pio, (uint)sm, PIO_DIR_FROM_SM,
+                                   L3_BATCH_SIZE, rx_buf);
+        if (rc < 0) {
+            fprintf(stderr, "ERROR: xfer_data(RX) failed at warmup[%zu]: %d (%s)\n",
+                    i, rc, strerror(errno));
+            ret = 1;
+            goto cleanup;
+        }
     }
 
     if (!g_running) { ret = 1; goto cleanup; }
@@ -641,9 +623,15 @@ static int run_l3(PIO pio, int input_pin, int output_pin,
 
     for (size_t i = 0; i < iterations && g_running; i++) {
         uint64_t t0 = get_time_ns();
-        pio_sm_xfer_data(pio, (uint)sm, PIO_DIR_FROM_SM,
-                         L3_BATCH_SIZE, rx_buf);
+        int rc = pio_sm_xfer_data(pio, (uint)sm, PIO_DIR_FROM_SM,
+                                   L3_BATCH_SIZE, rx_buf);
         uint64_t t1 = get_time_ns();
+        if (rc < 0) {
+            fprintf(stderr, "ERROR: xfer_data(RX) failed at iter[%zu]: %d (%s)\n",
+                    i, rc, strerror(errno));
+            ret = 1;
+            goto cleanup;
+        }
         latencies[i] = (double)(t1 - t0);
     }
 
@@ -666,6 +654,7 @@ static int run_l3(PIO pio, int input_pin, int output_pin,
     report.num_warmup = warmup;
     report.rt_priority = rt_priority;
     report.cpu_affinity = cpu_affinity;
+    report.timing_label = "DMA batch read time";
 
     bench_compute_stats(latencies, iterations, scratch, &report.latency_ns);
 

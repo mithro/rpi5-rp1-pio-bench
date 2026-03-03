@@ -245,6 +245,8 @@ def run_test(
     warmup: int,
     settle_secs: int,
     measurement_timeout: int,
+    rt_priority: int = 0,
+    cpu: int = -1,
 ) -> TestResult:
     """Run a single latency test (L0, L1, L2, or L3).
 
@@ -286,6 +288,10 @@ def run_test(
         rpi5_warmup = warmup * 2
         rpi5_iters = iterations * 2
         rpi5_args += f" --iterations={rpi5_iters} --warmup={rpi5_warmup}"
+    if rt_priority > 0:
+        rpi5_args += f" --rt-priority={rt_priority}"
+    if cpu >= 0:
+        rpi5_args += f" --cpu={cpu}"
 
     log(f"\n  Starting RPi5: sudo {rpi5_binary} {rpi5_args}")
     rpi5_proc = subprocess.Popen(
@@ -313,10 +319,16 @@ def run_test(
     log(f"  RPi5 GPIO{output_pin} after PIO start: {pin_state}")
 
     # Step 4: Run RPi4 measurement (always request JSON from RPi4)
+    test_layer_num = TEST_LAYER_MAP.get(test_mode, 0)
     rpi4_args = (
         f"--stimulus-pin={input_pin} --response-pin={output_pin} "
-        f"--iterations={iterations} --warmup={warmup} --json"
+        f"--iterations={iterations} --warmup={warmup} "
+        f"--test-layer={test_layer_num} --json"
     )
+    if rt_priority > 0:
+        rpi4_args += f" --rt-priority={rt_priority}"
+    if cpu >= 0:
+        rpi4_args += f" --cpu={cpu}"
     rpi4_cmd = f"{rpi4_binary} {rpi4_args}"
     log(f"  Running RPi4: {rpi4_cmd}\n")
 
@@ -393,6 +405,8 @@ def run_test_standalone(
     iterations: int,
     warmup: int,
     measurement_timeout: int,
+    rt_priority: int = 0,
+    cpu: int = -1,
 ) -> TestResult:
     """Run an RPi5-standalone test (no RPi4 involvement).
 
@@ -412,6 +426,10 @@ def run_test_standalone(
         f"--test={test_mode} --iterations={iterations} "
         f"--warmup={warmup} --json"
     )
+    if rt_priority > 0:
+        rpi5_args += f" --rt-priority={rt_priority}"
+    if cpu >= 0:
+        rpi5_args += f" --cpu={cpu}"
     rpi5_cmd = f"sudo {rpi5_binary} {rpi5_args}"
     log(f"  Running RPi5: {rpi5_cmd}\n")
 
@@ -578,6 +596,14 @@ examples:
         "--measurement-timeout", type=int, default=DEFAULT_MEASUREMENT_TIMEOUT,
         help=f"Timeout for RPi4 measurement in seconds (default: {DEFAULT_MEASUREMENT_TIMEOUT})",
     )
+    parser.add_argument(
+        "--rt-priority", type=int, default=0,
+        help="SCHED_FIFO real-time priority 1-99 (default: off)",
+    )
+    parser.add_argument(
+        "--cpu", type=int, default=-1,
+        help="Pin measurement process to CPU core N (default: no affinity)",
+    )
 
     return parser.parse_args()
 
@@ -655,6 +681,8 @@ def main() -> int:
                 iterations=args.iterations,
                 warmup=args.warmup,
                 measurement_timeout=args.measurement_timeout,
+                rt_priority=args.rt_priority,
+                cpu=args.cpu,
             )
         else:
             result = run_test(
@@ -668,6 +696,8 @@ def main() -> int:
                 warmup=args.warmup,
                 settle_secs=args.settle_secs,
                 measurement_timeout=args.measurement_timeout,
+                rt_priority=args.rt_priority,
+                cpu=args.cpu,
             )
         results.append(result)
 

@@ -38,6 +38,7 @@ typedef struct {
     size_t num_warmup;
     int rt_priority;                    /* 0 = no RT, 1-99 = SCHED_FIFO */
     int cpu_affinity;                   /* -1 = no affinity, 0-3 = core */
+    const char *timing_label;           /* NULL defaults to "Latency" */
 } latency_report_t;
 
 /* ─── Timing helper ──────────────────────────────────── */
@@ -87,9 +88,10 @@ static inline void latency_print_report(FILE *f, const latency_report_t *r)
     if (r->cpu_affinity >= 0)
         fprintf(f, "  CPU affinity:      core %d\n", r->cpu_affinity);
 
+    const char *label = r->timing_label ? r->timing_label : "Latency";
     fprintf(f,
         "\n"
-        "Round-trip latency (nanoseconds):\n"
+        "%s (nanoseconds):\n"
         "  ----------------------------------------------------------------\n"
         "  Min:               %.0f\n"
         "  Max:               %.0f\n"
@@ -101,6 +103,7 @@ static inline void latency_print_report(FILE *f, const latency_report_t *r)
         "  P99:               %.0f\n"
         "  ----------------------------------------------------------------\n"
         "================================================================\n",
+        label,
         r->latency_ns.min,
         r->latency_ns.max,
         r->latency_ns.mean,
@@ -125,7 +128,8 @@ static inline void latency_print_json(FILE *f, const latency_report_t *r)
         "    \"iterations\": %zu,\n"
         "    \"warmup\": %zu,\n"
         "    \"rt_priority\": %d,\n"
-        "    \"cpu_affinity\": %d\n"
+        "    \"cpu_affinity\": %d,\n"
+        "    \"timing_label\": \"%s\"\n"
         "  },\n"
         "  \"results\": {\n"
         "    \"round_trip_ns\": {\n"
@@ -148,6 +152,7 @@ static inline void latency_print_json(FILE *f, const latency_report_t *r)
         r->num_warmup,
         r->rt_priority,
         r->cpu_affinity,
+        r->timing_label ? r->timing_label : "Latency",
         r->latency_ns.min,
         r->latency_ns.max,
         r->latency_ns.mean,
