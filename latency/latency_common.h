@@ -26,7 +26,7 @@
 #define TEST_L0  0   /* PIO-only echo (hardware baseline) */
 #define TEST_L1  1   /* PIO → ioctl → PIO */
 #define TEST_L2  2   /* PIO → DMA → CPU poll → DMA → PIO */
-#define TEST_L3  3   /* PIO → mmap FIFO → PIO (experimental) */
+#define TEST_L3  3   /* Batched DMA throughput (standalone) */
 
 /* Latency report for a single test run. */
 typedef struct {
@@ -57,7 +57,7 @@ static inline const char *test_layer_name(int layer)
     case TEST_L0: return "L0 (PIO-only echo)";
     case TEST_L1: return "L1 (PIO -> ioctl -> PIO)";
     case TEST_L2: return "L2 (PIO -> DMA -> poll -> PIO)";
-    case TEST_L3: return "L3 (PIO -> mmap FIFO -> PIO)";
+    case TEST_L3: return "L3 (batched DMA, 4KB reads)";
     default:      return "unknown";
     }
 }
