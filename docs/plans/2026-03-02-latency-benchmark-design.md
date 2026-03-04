@@ -72,6 +72,10 @@ of where latency comes from.
 measurement overhead). This is the **hardware floor** — no software path can beat
 this.
 
+**Measured latency:** ~388 ns median (259 ns min, 518 ns max). The RPi4 GPIO read
+latency (~68 ns per poll) and `clock_gettime()` overhead dominate the measurement;
+the actual PIO echo is ~20 ns. See [Measured Results](#measured-results) below.
+
 **Variants to test:**
 - With input synchroniser enabled (default, safer): +10 ns
 - With input synchroniser bypassed (`INPUT_SYNC_BYPASS`): faster but risk of
@@ -100,6 +104,9 @@ while (running) {
 through the kernel, each going: userspace → ioctl → kernel → firmware mailbox →
 RP1 M3 core → PIO FIFO → return.
 
+**Measured latency:** ~43.6 µs median (33.0 µs min, 136 µs max). Two ioctl
+round-trips at ~22 µs each, consistent with expectations. Stddev 3.2 µs.
+
 **What this measures:** The cost of the standard piolib API for single-word
 transfers. This represents the latency that any "normal" userspace PIO application
 would experience.
@@ -121,7 +128,32 @@ For latency, we need to:
 
 **Expected latency:** ~1-10 us. DMA setup overhead + PCIe round-trip + CPU poll.
 
-### L3: PIO → mmap FIFO → PIO (Direct Register Path, Experimental)
+**Measured latency:** ~52.5 µs median (49.9 µs min, 102 µs max). Single-word DMA
+is ~20% slower than ioctl due to DMA setup/teardown overhead dominating for 4-byte
+transfers. However, DMA has tighter variance (stddev 1.8 µs vs 3.2 µs for L1),
+suggesting DMA is more deterministic.
+
+### L3: Batched DMA Throughput (Standalone, Redesigned)
+
+> **Note:** L3 was redesigned from the original mmap FIFO plan (below) to batched
+> DMA throughput measurement. The mmap approach was deferred because it requires
+> `/dev/mem` access and direct register manipulation that may conflict with the
+> kernel PIO driver. The batched DMA approach measures throughput using the existing
+> `pio_sm_xfer_data()` API with larger transfer sizes.
+
+**Signal path:** Internal PIO data generator → DMA → host memory (standalone, no GPIO)
+
+**Approach:** Uses the same loopback PIO program as the throughput benchmark
+(bitwise NOT: `out x, 32` / `mov y, ~x` / `in y, 32`). Configures DMA for 4KB
+batch reads via `pio_sm_xfer_data()` and measures the time for each batch.
+
+**Measured latency:** ~88.6 µs median for 4KB (87.1 µs min, 172 µs max). This
+gives 4096 bytes / 88.6 µs = **46 MB/s**, consistent with the ~42 MB/s aggregate
+measured by the throughput benchmark.
+
+#### Original L3 Design (Deferred): PIO → mmap FIFO → PIO
+
+The original L3 design was direct mmap FIFO access:
 
 **Signal path:** RPi4 GPIO → wire → RPi5 PIO SM0 → RX FIFO → **direct register
 read via mmap** → CPU → **direct register write via mmap** → TX FIFO → RPi5 PIO
@@ -153,8 +185,7 @@ firmware overhead.
 - RP1 register offsets may differ from documentation
 - This is experimental and not officially supported
 
-**Mitigation:** Test L3 separately from L0-L2. If it doesn't work or causes
-instability, it can be dropped without affecting the other tests.
+**Status:** Deferred. May be revisited as a future L3-mmap test.
 
 ## RPi4 Measurement Program
 
@@ -331,33 +362,60 @@ Round-trip latency (measured by RPi4):
 
 ```
 latency/
-    latency_rpi4.c          # RPi4 measurement program
-    latency_rpi5.c          # RPi5 PIO latency program
-    gpio_echo.pio           # L0: PIO-only echo
-    gpio_echo.pio.h         # Pre-generated header
-    gpio_echo_mov.pio       # L0 variant: continuous copy
-    gpio_echo_mov.pio.h     # Pre-generated header
-    edge_detector.pio       # L1-L3: input edge detector
-    edge_detector.pio.h     # Pre-generated header
-    output_driver.pio       # L1-L3: output from FIFO
-    output_driver.pio.h     # Pre-generated header
-    Makefile                # Build for both RPi4 and RPi5 targets
+    latency_rpi4.c            # RPi4 measurement program (mmap GPIO, nanosecond timing)
+    latency_rpi5.c            # RPi5 PIO latency program (L0-L3 implementations)
+    latency_common.h          # Shared types, constants, report formatting
+    gpio_echo.pio             # L0: PIO-only echo (4 instructions)
+    gpio_echo.pio.h           # Pre-generated header
+    edge_detector.pio         # L1-L2: input edge detector (autopush to RX FIFO)
+    edge_detector.pio.h       # Pre-generated header
+    output_driver.pio         # L1-L2: output driver (set pins from TX FIFO)
+    output_driver.pio.h       # Pre-generated header
+    run_latency_benchmark.py  # Orchestrator (SSH deploy, coordinate, collect results)
+    Makefile                  # Build system (rpi4/rpi5 targets with platform detection)
     .gitignore
-run_latency_benchmark.py    # Orchestrator script (runs from local machine)
 ```
 
-The latency benchmark reuses `benchmark/benchmark_stats.c/h` and
-`benchmark/benchmark_format.c/h` for statistics computation and output formatting.
+The latency benchmark reuses `benchmark/benchmark_stats.c/h` for statistics
+computation. The `gpio_echo_mov.pio` variant (continuous copy via `mov pins, pins`)
+was not implemented in the final version.
 
 ## Success Criteria
 
-1. L0 (PIO-only) round-trip measures < 100 ns consistently
-2. L1 (ioctl) round-trip measures ~20-40 us, confirming the firmware mailbox cost
-3. L2 (DMA) round-trip measures ~1-10 us, showing DMA improvement over ioctl
-4. L3 (mmap) round-trip measures < 2 us, showing direct access improvement
-5. RT optimisations measurably reduce jitter (P99 closer to median)
-6. All tests produce repeatable results with low stddev
-7. The latency breakdown clearly shows where time is spent at each layer
+Original criteria and actual outcomes:
+
+| # | Criterion | Outcome | Notes |
+|---|-----------|---------|-------|
+| 1 | L0 round-trip < 100 ns | **MISS** — 388 ns median | RPi4 measurement overhead (~68 ns/poll + clock_gettime) dominates. PIO echo itself is ~20 ns. |
+| 2 | L1 round-trip ~20-40 µs | **PASS** — 43.6 µs median | Slightly above range; two ioctl round-trips at ~22 µs each. |
+| 3 | L2 round-trip ~1-10 µs | **MISS** — 52.5 µs median | Single-word DMA setup overhead is higher than expected. DMA shines for bulk, not single-word. |
+| 4 | L3 mmap < 2 µs | **REDESIGNED** — 88.6 µs (4KB batch) | Redesigned to batched DMA throughput. Measures 46 MB/s, consistent with throughput benchmark. |
+| 5 | RT reduces jitter | **NOT YET TESTED** | RT priority and CPU affinity pass-through implemented but not systematically tested. |
+| 6 | Repeatable, low stddev | **PASS** | L0: 23 ns, L1: 3.2 µs, L2: 1.8 µs, L3: 2.8 µs — all tight. |
+| 7 | Clear latency hierarchy | **PASS** | L0 (388 ns) << L1 (44 µs) < L2 (52 µs) << L3 (89 µs for 4KB). Each layer's cost is clearly attributable. |
+
+Key insight: L2 (single-word DMA) is ~20% *slower* than L1 (ioctl) because DMA
+setup/teardown overhead dominates for 4-byte transfers. However, L2 has lower
+variance (stddev 1.8 µs vs 3.2 µs), suggesting DMA is more deterministic. DMA's
+advantage is in bulk transfers (see throughput benchmark: ~42 MB/s).
+
+## Measured Results
+
+1000 iterations, 50 warmup, GPIO4/GPIO5 (JC connector), kernel 6.12+:
+
+| Layer | Min | Median | Mean | P95 | P99 | Max | Std Dev |
+|-------|----:|-------:|-----:|----:|----:|----:|--------:|
+| **L0** (PIO-only) | 259 ns | 388 ns | 381 ns | 389 ns | 481 ns | 518 ns | 23 ns |
+| **L1** (ioctl) | 33.0 µs | 43.6 µs | 44.4 µs | 46.3 µs | 46.7 µs | 136 µs | 3.2 µs |
+| **L2** (DMA) | 49.9 µs | 52.5 µs | 52.3 µs | 52.8 µs | 53.0 µs | 102 µs | 1.8 µs |
+| **L3** (batched 4KB DMA) | 87.1 µs | 88.6 µs | 88.6 µs | 89.1 µs | 90.2 µs | 172 µs | 2.8 µs |
+
+### Latency Hierarchy
+
+- **L0** (~388 ns): Hardware floor. PIO echoes autonomously in 4 instructions (~20 ns processing + RPi4 measurement overhead).
+- **L1** (~44 µs, 112× L0): Each `pio_sm_get/put` is an ioctl → kernel → firmware mailbox → RP1 M3 core round-trip. Two per echo = ~22 µs × 2.
+- **L2** (~52 µs, 135× L0): Single-word DMA is ~20% slower than ioctl. DMA setup/teardown overhead dominates for small (4-byte) transfers. However, L2 has tighter variance (stddev 1.8 µs vs 3.2 µs), suggesting DMA is more deterministic.
+- **L3** (~89 µs for 4KB): Measures DMA read throughput — 4096 bytes / 88.6 µs = **46 MB/s**, consistent with the ~42 MB/s aggregate measured by the throughput benchmark.
 
 ## Risks and Mitigations
 

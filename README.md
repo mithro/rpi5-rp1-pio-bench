@@ -246,9 +246,92 @@ benchmark/
   Makefile              Build system
 ```
 
+## Latency Benchmark
+
+Measures round-trip GPIO latency through the RPi5's RP1 PIO block at various abstraction layers, isolating the cost of each layer in the software stack.
+
+### Architecture
+
+An RPi4 generates stimulus pulses and measures the external round-trip time using memory-mapped GPIO (`/dev/gpiomem`, ~68 ns read resolution). An RPi5 echoes the signal back through PIO state machines, with progressively more software involvement at each layer:
+
+```
+RPi4 GPIO (stimulus) → wire → RPi5 PIO input → [processing layer] → RPi5 PIO output → wire → RPi4 GPIO (measurement)
+```
+
+A Python orchestrator (`latency/run_latency_benchmark.py`) coordinates both devices over SSH, deploying binaries, running tests, and collecting JSON results.
+
+### Test Layers
+
+| Layer | Description | Signal Path |
+|-------|-------------|-------------|
+| **L0** | PIO-only echo | GPIO → PIO SM → GPIO (no CPU) |
+| **L1** | PIO → ioctl → PIO | GPIO → PIO RX FIFO → `pio_sm_get()` → CPU → `pio_sm_put()` → PIO TX FIFO → GPIO |
+| **L2** | PIO → DMA → PIO | GPIO → PIO RX FIFO → `pio_sm_xfer_data()` → CPU → `pio_sm_xfer_data()` → PIO TX FIFO → GPIO |
+| **L3** | Batched DMA throughput | Internal PIO data generator → DMA → host memory (standalone, no GPIO) |
+
+### Measured Results
+
+1000 iterations, 50 warmup, GPIO4/GPIO5 (JC connector), kernel 6.12+:
+
+| Layer | Min | Median | Mean | P95 | P99 | Max | Std Dev |
+|-------|----:|-------:|-----:|----:|----:|----:|--------:|
+| **L0** (PIO-only) | 259 ns | 388 ns | 381 ns | 389 ns | 481 ns | 518 ns | 23 ns |
+| **L1** (ioctl) | 33.0 µs | 43.6 µs | 44.4 µs | 46.3 µs | 46.7 µs | 136 µs | 3.2 µs |
+| **L2** (DMA) | 49.9 µs | 52.5 µs | 52.3 µs | 52.8 µs | 53.0 µs | 102 µs | 1.8 µs |
+| **L3** (batched 4KB DMA) | 87.1 µs | 88.6 µs | 88.6 µs | 89.1 µs | 90.2 µs | 172 µs | 2.8 µs |
+
+### Latency Hierarchy
+
+- **L0** (~388 ns): Hardware floor. PIO echoes autonomously in 4 instructions (~20 ns processing + RPi4 measurement overhead).
+- **L1** (~44 µs, 112× L0): Each `pio_sm_get/put` is an ioctl → kernel → firmware mailbox → RP1 M3 core round-trip. Two per echo = ~22 µs × 2.
+- **L2** (~52 µs, 135× L0): Single-word DMA is ~20% slower than ioctl. DMA setup/teardown overhead dominates for small (4-byte) transfers. However, L2 has tighter variance (stddev 1.8 µs vs 3.2 µs), suggesting DMA is more deterministic.
+- **L3** (~89 µs for 4KB): Measures DMA read throughput — 4096 bytes / 88.6 µs = **46 MB/s**, consistent with the ~42 MB/s aggregate measured by the throughput benchmark.
+
+### Running the Latency Benchmark
+
+**From a development machine with SSH access to both RPi5 and RPi4:**
+
+```bash
+# Run default tests (L0 + L1)
+uv run python latency/run_latency_benchmark.py
+
+# Run all four layers
+uv run python latency/run_latency_benchmark.py --tests L0 L1 L2 L3
+
+# Custom parameters
+uv run python latency/run_latency_benchmark.py --tests L1 L2 --iterations 5000 --warmup 100
+
+# JSON output (progress goes to stderr)
+uv run python latency/run_latency_benchmark.py --tests L0 L1 L2 L3 --json
+
+# With RT optimisations
+uv run python latency/run_latency_benchmark.py --tests L1 --rt-priority=80 --cpu=3
+```
+
+**Prerequisites:**
+- RPi5 with `libpio-dev` installed and root access (`/dev/pio0`)
+- RPi4 with `/dev/gpiomem` access (GPIO group membership, no root needed)
+- GPIO4 and GPIO5 connected between devices (JC connector, bottom row)
+- SSH access from development machine to both devices
+
+### Latency Source Structure
+
+```
+latency/
+  latency_rpi4.c          RPi4 measurement program (mmap GPIO, nanosecond timing)
+  latency_rpi5.c          RPi5 PIO latency program (L0-L3 implementations)
+  latency_common.h        Shared types, constants, report formatting
+  gpio_echo.pio           L0: PIO-only echo (4 instructions)
+  edge_detector.pio       L1-L2: input edge detector (autopush to RX FIFO)
+  output_driver.pio       L1-L2: output driver (set pins from TX FIFO)
+  *.pio.h                 Pre-generated PIO headers
+  run_latency_benchmark.py  Orchestrator (SSH deploy, coordinate, collect results)
+  Makefile                Build system (rpi4/rpi5 targets with platform detection)
+```
+
 ## Hardware
 
-Two Raspberry Pi devices (RPi5 + RPi4) with Digilent Pmod HAT Adapters, connected via jumper cables across Pmod ports JA, JB, and JC (21 GPIO connections total). The RPi4 is used as a loopback target for the GPIO verification script; it is not involved in the PIO benchmark, which runs entirely on the RPi5.
+Two Raspberry Pi devices (RPi5 + RPi4) with Digilent Pmod HAT Adapters, connected via jumper cables across Pmod ports JA, JB, and JC (21 GPIO connections total). The RPi4 serves as both a loopback target for the GPIO verification script and the external stimulus/measurement device for the latency benchmark.
 
 See [`hw.md`](hw.md) for the full pin mapping.
 
@@ -260,7 +343,8 @@ See [`hw.md`](hw.md) for the full pin mapping.
 | [`rp1-dma.md`](rp1-dma.md) | RP1 DMA architecture, the 10 MB/s throughput wall, and the kernel patches that address it |
 | [`rp1-dma-2.md`](rp1-dma-2.md) | RP1 PIO register map, DMA data path internals, performance measurements, and worked code examples |
 | [`resources.md`](resources.md) | Curated collection of datasheets, source repos, PRs, and community projects |
-| [`benchmark/`](benchmark/) | PIO internal loopback benchmark source code and build system |
+| [`benchmark/`](benchmark/) | PIO internal loopback throughput benchmark (DMA round-trip, ~42 MB/s) |
+| [`latency/`](latency/) | PIO latency benchmark (L0–L3 layers, RPi4 stimulus + RPi5 echo) |
 | [`verify_pmod_connections.py`](verify_pmod_connections.py) | Tests GPIO jumper connections between RPi5 and RPi4 via Pmod HAT |
 
 ## License

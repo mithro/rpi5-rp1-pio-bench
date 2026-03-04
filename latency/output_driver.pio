@@ -1,0 +1,26 @@
+; output_driver.pio — FIFO-driven output for CPU-in-the-loop tests (L1-L3)
+;
+; Reads a 32-bit value from the TX FIFO, examines bit 0, and drives
+; the output pin HIGH or LOW using SET (not OUT).
+;
+; NOTE: On RP1 PIO, 'out pins' does NOT drive physical GPIO pads.
+; Only 'set pins' actually toggles the GPIO, so we must route the
+; FIFO data through scratch register X and use conditional branching.
+;
+; Expected values: 0xFFFFFFFF (drive HIGH), 0x00000000 (drive LOW)
+;
+; Requires: set_base = output GPIO pin, set_count = 1
+;           autopull DISABLED (explicit pull is used)
+
+.program output_driver
+
+.wrap_target
+start:
+    pull block          ; stall until TX FIFO has data → OSR
+    out x, 1            ; shift 1 bit from OSR → scratch X
+    jmp !x do_low       ; if bit was 0, jump to drive LOW
+    set pins, 1         ; bit was 1 → drive output HIGH
+    jmp start           ; back to wait for next FIFO word
+do_low:
+    set pins, 0         ; drive output LOW
+.wrap
