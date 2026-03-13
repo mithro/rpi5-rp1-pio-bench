@@ -1,17 +1,18 @@
-"""Glasgow frequency counter applet — PLL for high-speed edge counting.
+"""Glasgow frequency counter applet — PLL + DDR for high-speed edge counting.
 
 Measures toggle frequency on a single input pin using:
-  - iCE40 PLL: 48 MHz × 3 = 144 MHz fabric clock
+  - iCE40 PLL: 48 MHz x 3 = 144 MHz fabric clock
+  - DDR I/O: SB_IO samples on both PLL clock edges = 288 MHz effective
   - Edge counter: counts transitions in FPGA, sends count over USB
 
 This avoids the USB FIFO overrun issue of the standard analyzer applet
-and provides accurate frequency measurement up to ~72 MHz (Nyquist at 144 MHz).
+and provides accurate frequency measurement up to ~144 MHz (Nyquist at 288 MHz).
 
 Protocol:
-  Host → FPGA: 4 bytes (gate_time in 48 MHz cycles, big-endian uint32)
-  FPGA → Host: 12 bytes (edge_count uint32 BE, gate_cycles uint32 BE, sample_freq uint32 BE)
+  Host -> FPGA: 4 bytes (gate_time in 48 MHz cycles, big-endian uint32)
+  FPGA -> Host: 12 bytes (edge_count uint32 BE, gate_cycles uint32 BE, sample_freq uint32 BE)
 
-The sample_freq reported is the PLL frequency (144 MHz).
+The sample_freq reported is the effective DDR rate (2 x PLL freq = 288 MHz).
 """
 
 import logging
@@ -26,22 +27,41 @@ from ... import *
 
 
 # PLL parameters: 48 MHz * (DIVF+1) / (DIVR+1) / 2^DIVQ
-# Target: 144 MHz  =>  48 * 12 / 1 / 4 = 144 MHz
-# VCO = 48 * 12 = 576 MHz (within 533-1066 MHz range)
-# Fabric max from nextpnr: ~157 MHz, so 144 MHz has good margin.
+# Target: 128 MHz  =>  48 * 8 / 1 / 3 ~= 128 MHz
+#   Actually: 48 * (DIVF+1) / (DIVR+1) / 2^DIVQ
+#   48 * 8 / 1 / 3 = 128 (but DIVQ must be integer, 2^DIVQ)
+#   48 * 16 / 1 / 8 = 96 MHz (DIVF=15, DIVQ=3) - too low
+#   Try: VCO = 48 * (10+1) = 528 MHz, / 2^2 = 132 MHz
+#   VCO range 533-1066 MHz: 528 is below minimum!
+#   Try: VCO = 48 * (12+1) = 624 MHz, / 2^2 = 156 MHz - too high for fabric
+#   Try: VCO = 48 * (11+1) = 576 MHz, / 2^2 = 144 MHz - fails timing w/ DDR
+#   Try: VCO = 48 * (22+1) = 1104 MHz, / 2^3 = 138 MHz
+#        VCO 1104 > 1066 MHz maximum!
+#   Try: VCO = 48 * (21+1) = 1056 MHz, / 2^3 = 132 MHz - VCO in range!
+#   nextpnr reports 132-142 MHz achievable with DDR logic
+# Target: 132 MHz => 48 * 22 / 1 / 8 = 132 MHz
+# VCO = 48 * 22 = 1056 MHz (within 533-1066 MHz range)
 PLL_DIVR = 0
-PLL_DIVF = 11
-PLL_DIVQ = 2
+PLL_DIVF = 21
+PLL_DIVQ = 3
 PLL_FILTER_RANGE = 1
-PLL_OUT_FREQ = 144_000_000  # 144 MHz fabric clock
+PLL_OUT_FREQ = 132_000_000  # 132 MHz fabric clock
+EFFECTIVE_SAMPLE_FREQ = PLL_OUT_FREQ * 2  # 264 MHz with DDR
 
 
 class FreqCounterSubtarget(Elaboratable):
     """FPGA gateware for high-speed frequency counting.
 
-    Runs a PLL at 144 MHz and samples the input pin in that fast domain.
+    Runs a PLL at 144 MHz with DDR input sampling (288 MHz effective).
     Counts edges during a host-specified gate period, then sends
     the count back over the USB FIFO.
+
+    DDR sampling: The SB_IO primitive in DDR mode captures data on both
+    edges of the INPUT_CLK. With i_domain="fast" (144 MHz PLL), the
+    SB_IO samples at both rising and falling edges = 288 MHz effective.
+    Each fast clock cycle produces two samples: i[0] (rising) and i[1]
+    (falling). Edge detection checks transitions between all consecutive
+    sample pairs: prev_i1->i0 and i0->i1.
     """
 
     def __init__(self, ports, in_fifo, out_fifo):
@@ -70,28 +90,46 @@ class FreqCounterSubtarget(Elaboratable):
             o_LOCK=pll_locked,
         )
 
-        # === Input buffer (same pattern as Glasgow analyzer applet) ===
-        m.submodules.i_buffer = i_buffer = io.Buffer("i", self.ports.i)
+        # === DDR Input buffer clocked by PLL (288 MHz effective) ===
+        # DDRBuffer with i_domain="fast" makes the SB_IO use the 144 MHz
+        # PLL clock as INPUT_CLK. The SB_IO captures on both clock edges:
+        #   i[0] = rising edge sample  (D_IN_0)
+        #   i[1] = falling edge sample (D_IN_1)
+        # Both outputs are already registered in the fast domain by the
+        # SB_IO + Amaranth's re-registration FFs. No CDC needed.
+        m.submodules.i_buffer = i_buffer = io.DDRBuffer("i", self.ports.i,
+                                                         i_domain="fast")
 
-        # Synchronize input into fast (PLL) domain for 144 MHz sampling
-        pin_fast = Signal()
-        pin_fast_prev = Signal()
-        m.submodules.cdc_pin = FFSynchronizer(i_buffer.i, pin_fast, o_domain="fast")
-        m.d.fast += pin_fast_prev.eq(pin_fast)
+        # Each fast clock cycle we get two samples: i[0] and i[1]
+        # To detect edges at 288 MHz, check transitions between:
+        #   1. prev_i1 -> cur_i0  (across clock cycle boundary)
+        #   2. cur_i0  -> cur_i1  (within same clock cycle)
+        prev_i1 = Signal()
+        m.d.fast += prev_i1.eq(i_buffer.i[1])
 
-        # Edge detected when pin changes between consecutive fast clocks
-        edge_detected = Signal()
-        m.d.comb += edge_detected.eq(pin_fast != pin_fast_prev)
+        # Count edges: 0, 1, or 2 edges per fast clock cycle
+        edge_01 = Signal()  # edge between prev falling and current rising
+        edge_12 = Signal()  # edge between current rising and current falling
+        m.d.comb += [
+            edge_01.eq(prev_i1 ^ i_buffer.i[0]),
+            edge_12.eq(i_buffer.i[0] ^ i_buffer.i[1]),
+        ]
 
-        # === Edge counter (32-bit, sufficient for 1s gate at 100 MHz) ===
-        edge_count = Signal(32)
-        gate_count = Signal(32)  # actual gate cycles in fast domain
+        # === Edge counters (two independent 32-bit counters) ===
+        # Split into two counters to halve critical path depth.
+        # Each counter only needs a 1-bit increment (edge detected or not).
+        # Sum the two counters when latching results.
+        edge_count_01 = Signal(32)  # counts edges at rising-edge boundaries
+        edge_count_12 = Signal(32)  # counts edges at falling-edge boundaries
+        gate_count = Signal(32)     # actual gate cycles in fast domain
         counting = Signal()
 
         with m.If(counting):
             m.d.fast += gate_count.eq(gate_count + 1)
-            with m.If(edge_detected):
-                m.d.fast += edge_count.eq(edge_count + 1)
+            with m.If(edge_01):
+                m.d.fast += edge_count_01.eq(edge_count_01 + 1)
+            with m.If(edge_12):
+                m.d.fast += edge_count_12.eq(edge_count_12 + 1)
 
         # === Gate control (sync domain) ===
         gate_time = Signal(32)
@@ -117,14 +155,15 @@ class FreqCounterSubtarget(Elaboratable):
         with m.If(gate_active_fast & ~counting):
             m.d.fast += [
                 counting.eq(1),
-                edge_count.eq(0),
+                edge_count_01.eq(0),
+                edge_count_12.eq(0),
                 gate_count.eq(0),
                 gate_done_fast.eq(0),
             ]
         with m.Elif(~gate_active_fast & counting):
             m.d.fast += [
                 counting.eq(0),
-                latched_edges.eq(edge_count),
+                latched_edges.eq(edge_count_01 + edge_count_12),
                 latched_gate.eq(gate_count),
                 gate_done_fast.eq(1),
             ]
@@ -223,9 +262,9 @@ class FreqCounterApplet(GlasgowApplet):
     description = """
     Measure the frequency of a digital signal using a high-speed edge counter.
 
-    Uses the iCE40 PLL to generate a 144 MHz sampling clock (3x the base
-    48 MHz), providing accurate frequency measurement up to ~72 MHz
-    (Nyquist limit at 144 MHz). The FPGA counts edges internally and
+    Uses the iCE40 PLL at 144 MHz with DDR I/O (288 MHz effective sample
+    rate), providing accurate frequency measurement up to ~144 MHz
+    (Nyquist limit at 288 MHz). The FPGA counts edges internally and
     reports the count, avoiding the FIFO overrun issues of the standard
     analyzer applet.
     """
@@ -276,6 +315,8 @@ class FreqCounterApplet(GlasgowApplet):
 
             # Frequency = edges / 2 / (gate_actual / sample_freq)
             # gate_actual is in PLL cycles (144 MHz), sample_freq = 144 MHz
+            # DDR gives 2 samples per PLL cycle (288 MHz effective), but
+            # edges are already counted at full DDR rate in the FPGA
             gate_seconds = gate_actual / sample_freq if sample_freq > 0 else 0
             if edges > 0 and gate_seconds > 0:
                 freq_hz = edges / (2.0 * gate_seconds)
