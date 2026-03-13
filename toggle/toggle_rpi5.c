@@ -15,7 +15,6 @@
 
 #define _GNU_SOURCE
 
-#include <errno.h>
 #include <getopt.h>
 #include <signal.h>
 #include <stdio.h>
@@ -134,6 +133,23 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    /* Install SIGINT handler for clean shutdown. */
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = sigint_handler;
+    sigaction(SIGINT, &sa, NULL);
+
+    /* Open PIO instance (must happen before clock_get_hz which uses
+     * pio_get_current() internally). */
+    PIO pio = pio0;
+    if (PIO_IS_ERR(pio)) {
+        fprintf(stderr,
+            "ERROR: failed to open PIO device.\n"
+            "  Is /dev/pio0 present? Is libpio-dev installed?\n"
+            "  This program requires RPi5 with RP1 PIO support.\n");
+        return 1;
+    }
+
     /* Query the reported PIO system clock. */
     uint32_t sys_clk_hz = clock_get_hz(clk_sys);
 
@@ -153,25 +169,10 @@ int main(int argc, char **argv)
     fprintf(stderr, "  Expected freq:  %s\n", expected_buf);
     fprintf(stderr, "  Duration:       %d ms\n", duration_ms);
 
-    /* Install SIGINT handler for clean shutdown. */
-    struct sigaction sa;
-    memset(&sa, 0, sizeof(sa));
-    sa.sa_handler = sigint_handler;
-    sigaction(SIGINT, &sa, NULL);
-
-    /* Open PIO instance. */
-    PIO pio = pio_open(0);
-    if (!pio) {
-        fprintf(stderr, "ERROR: failed to open /dev/pio0 (%s)\n",
-                strerror(errno));
-        return 1;
-    }
-
     /* Claim a state machine. */
-    int sm = pio_claim_unused_sm(pio);
+    int sm = pio_claim_unused_sm(pio, false);
     if (sm < 0) {
         fprintf(stderr, "ERROR: no free state machines\n");
-        pio_close(pio);
         return 1;
     }
 
@@ -179,17 +180,17 @@ int main(int argc, char **argv)
     uint16_t patched_insns[2];
     build_toggle_program(patched_insns, delay);
 
-    struct pio_program prog = {
+    pio_program_t prog = {
         .instructions = patched_insns,
         .length = 2,
         .origin = -1,
+        .pio_version = 0,
     };
 
     uint offset = pio_add_program(pio, &prog);
     if (offset == PIO_ORIGIN_INVALID) {
         fprintf(stderr, "ERROR: failed to load toggle program\n");
         pio_sm_unclaim(pio, (uint)sm);
-        pio_close(pio);
         return 1;
     }
 
