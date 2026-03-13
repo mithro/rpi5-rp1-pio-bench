@@ -27,26 +27,24 @@ from ... import *
 
 
 # PLL parameters: 48 MHz * (DIVF+1) / (DIVR+1) / 2^DIVQ
-# Target: 128 MHz  =>  48 * 8 / 1 / 3 ~= 128 MHz
-#   Actually: 48 * (DIVF+1) / (DIVR+1) / 2^DIVQ
-#   48 * 8 / 1 / 3 = 128 (but DIVQ must be integer, 2^DIVQ)
-#   48 * 16 / 1 / 8 = 96 MHz (DIVF=15, DIVQ=3) - too low
-#   Try: VCO = 48 * (10+1) = 528 MHz, / 2^2 = 132 MHz
-#   VCO range 533-1066 MHz: 528 is below minimum!
-#   Try: VCO = 48 * (12+1) = 624 MHz, / 2^2 = 156 MHz - too high for fabric
-#   Try: VCO = 48 * (11+1) = 576 MHz, / 2^2 = 144 MHz - fails timing w/ DDR
-#   Try: VCO = 48 * (22+1) = 1104 MHz, / 2^3 = 138 MHz
-#        VCO 1104 > 1066 MHz maximum!
-#   Try: VCO = 48 * (21+1) = 1056 MHz, / 2^3 = 132 MHz - VCO in range!
-#   nextpnr reports 132-142 MHz achievable with DDR logic
-# Target: 132 MHz => 48 * 22 / 1 / 8 = 132 MHz
-# VCO = 48 * 22 = 1056 MHz (within 533-1066 MHz range)
+# Target: 168 MHz  =>  48 * 14 / 1 / 4 = 168 MHz
+# VCO = 48 * 14 = 672 MHz (within 533-1066 MHz range)
+# With pipelined edge detection, 8-bit segmented counters, and
+# sync-domain addition. Achievable max ~170 MHz; 168 MHz is reliable.
 PLL_DIVR = 0
-PLL_DIVF = 21
-PLL_DIVQ = 3
+PLL_DIVF = 13
+PLL_DIVQ = 2
 PLL_FILTER_RANGE = 1
-PLL_OUT_FREQ = 132_000_000  # 132 MHz fabric clock
-EFFECTIVE_SAMPLE_FREQ = PLL_OUT_FREQ * 2  # 264 MHz with DDR
+PLL_OUT_FREQ = 168_000_000  # 168 MHz fabric clock
+EFFECTIVE_SAMPLE_FREQ = PLL_OUT_FREQ * 2  # 336 MHz with DDR
+
+# Counter segmentation: 8-bit fast stage + 24-bit slow stage = 32 bits total.
+# The fast stage runs the full carry chain in the critical path.
+# The slow stage only increments on registered carry-out from the fast stage,
+# so its carry chain is decoupled from the critical path.
+# 8-bit carry chain: ~1 ns on iCE40 (vs ~2 ns for 12-bit).
+COUNTER_LO_BITS = 8
+COUNTER_HI_BITS = 24
 
 
 class FreqCounterSubtarget(Elaboratable):
@@ -57,11 +55,15 @@ class FreqCounterSubtarget(Elaboratable):
     the count back over the USB FIFO.
 
     DDR sampling: The SB_IO primitive in DDR mode captures data on both
-    edges of the INPUT_CLK. With i_domain="fast" (144 MHz PLL), the
-    SB_IO samples at both rising and falling edges = 288 MHz effective.
-    Each fast clock cycle produces two samples: i[0] (rising) and i[1]
-    (falling). Edge detection checks transitions between all consecutive
-    sample pairs: prev_i1->i0 and i0->i1.
+    edges of the 144 MHz PLL clock = 288 MHz effective sample rate.
+    Each fast clock cycle produces two samples: i[0] (rising edge) and
+    i[1] (falling edge). Edge detection checks all consecutive sample
+    pairs: prev_i1->i0 and i0->i1, detecting 0-2 edges per cycle.
+
+    Counter architecture: Each 32-bit counter is segmented into a 12-bit
+    fast stage and a 20-bit slow stage. Only the 12-bit carry chain is
+    in the critical path. The slow stage increments on a registered
+    carry-out, fully decoupled from timing.
     """
 
     def __init__(self, ports, in_fifo, out_fifo):
@@ -101,35 +103,78 @@ class FreqCounterSubtarget(Elaboratable):
                                                          i_domain="fast")
 
         # Each fast clock cycle we get two samples: i[0] and i[1]
-        # To detect edges at 288 MHz, check transitions between:
+        # To detect edges at DDR rate, check transitions between:
         #   1. prev_i1 -> cur_i0  (across clock cycle boundary)
         #   2. cur_i0  -> cur_i1  (within same clock cycle)
         prev_i1 = Signal()
         m.d.fast += prev_i1.eq(i_buffer.i[1])
 
-        # Count edges: 0, 1, or 2 edges per fast clock cycle
-        edge_01 = Signal()  # edge between prev falling and current rising
-        edge_12 = Signal()  # edge between current rising and current falling
-        m.d.comb += [
+        # Edge detection with pipeline register to break timing path.
+        # The XOR is combinational, then registered before use as enable.
+        # Adds 1 cycle latency (7 ns at 144 MHz) — negligible for 1s gate.
+        edge_01 = Signal()  # registered edge between prev falling and current rising
+        edge_12 = Signal()  # registered edge between current rising and current falling
+        m.d.fast += [
             edge_01.eq(prev_i1 ^ i_buffer.i[0]),
             edge_12.eq(i_buffer.i[0] ^ i_buffer.i[1]),
         ]
 
-        # === Edge counters (two independent 32-bit counters) ===
-        # Split into two counters to halve critical path depth.
-        # Each counter only needs a 1-bit increment (edge detected or not).
-        # Sum the two counters when latching results.
-        edge_count_01 = Signal(32)  # counts edges at rising-edge boundaries
-        edge_count_12 = Signal(32)  # counts edges at falling-edge boundaries
-        gate_count = Signal(32)     # actual gate cycles in fast domain
+        # === Segmented edge counters ===
+        # Each 32-bit counter is split into a 12-bit fast stage and a
+        # 20-bit slow stage. The fast stage carry-out is registered,
+        # so only 12 bits of carry chain are in the critical path.
+        # The slow stage increments one cycle later on the registered carry.
+        ec01_lo = Signal(COUNTER_LO_BITS)
+        ec01_hi = Signal(COUNTER_HI_BITS)
+        ec01_carry = Signal()
+
+        ec12_lo = Signal(COUNTER_LO_BITS)
+        ec12_hi = Signal(COUNTER_HI_BITS)
+        ec12_carry = Signal()
+
+        gc_lo = Signal(COUNTER_LO_BITS)
+        gc_hi = Signal(COUNTER_HI_BITS)
+        gc_carry = Signal()
+
         counting = Signal()
 
+        # Fast stage: 12-bit increment (critical path)
         with m.If(counting):
-            m.d.fast += gate_count.eq(gate_count + 1)
+            # Gate counter: always increments
+            gc_next = Signal(COUNTER_LO_BITS + 1)
+            m.d.comb += gc_next.eq(gc_lo + 1)
+            m.d.fast += [
+                gc_lo.eq(gc_next[:COUNTER_LO_BITS]),
+                gc_carry.eq(gc_next[COUNTER_LO_BITS]),
+            ]
+            # Edge counter 01: increment on edge
             with m.If(edge_01):
-                m.d.fast += edge_count_01.eq(edge_count_01 + 1)
+                ec01_next = Signal(COUNTER_LO_BITS + 1)
+                m.d.comb += ec01_next.eq(ec01_lo + 1)
+                m.d.fast += [
+                    ec01_lo.eq(ec01_next[:COUNTER_LO_BITS]),
+                    ec01_carry.eq(ec01_next[COUNTER_LO_BITS]),
+                ]
+            with m.Else():
+                m.d.fast += ec01_carry.eq(0)
+            # Edge counter 12: increment on edge
             with m.If(edge_12):
-                m.d.fast += edge_count_12.eq(edge_count_12 + 1)
+                ec12_next = Signal(COUNTER_LO_BITS + 1)
+                m.d.comb += ec12_next.eq(ec12_lo + 1)
+                m.d.fast += [
+                    ec12_lo.eq(ec12_next[:COUNTER_LO_BITS]),
+                    ec12_carry.eq(ec12_next[COUNTER_LO_BITS]),
+                ]
+            with m.Else():
+                m.d.fast += ec12_carry.eq(0)
+
+        # Slow stage: 20-bit increment on registered carry (not in critical path)
+        with m.If(gc_carry):
+            m.d.fast += gc_hi.eq(gc_hi + 1)
+        with m.If(ec01_carry):
+            m.d.fast += ec01_hi.eq(ec01_hi + 1)
+        with m.If(ec12_carry):
+            m.d.fast += ec12_hi.eq(ec12_hi + 1)
 
         # === Gate control (sync domain) ===
         gate_time = Signal(32)
@@ -145,8 +190,13 @@ class FreqCounterSubtarget(Elaboratable):
         # CDC: latch counter when gate ends (fast → sync)
         gate_done_fast = Signal()
         gate_done_sync = Signal()
-        latched_edges = Signal(32)
-        latched_gate = Signal(32)
+        # Latch each counter half separately — no 32-bit add in fast domain
+        latched_ec01_lo = Signal(COUNTER_LO_BITS)
+        latched_ec01_hi = Signal(COUNTER_HI_BITS)
+        latched_ec12_lo = Signal(COUNTER_LO_BITS)
+        latched_ec12_hi = Signal(COUNTER_HI_BITS)
+        latched_gc_lo = Signal(COUNTER_LO_BITS)
+        latched_gc_hi = Signal(COUNTER_HI_BITS)
 
         m.submodules.cdc_done = FFSynchronizer(
             gate_done_fast, gate_done_sync, o_domain="sync")
@@ -155,20 +205,25 @@ class FreqCounterSubtarget(Elaboratable):
         with m.If(gate_active_fast & ~counting):
             m.d.fast += [
                 counting.eq(1),
-                edge_count_01.eq(0),
-                edge_count_12.eq(0),
-                gate_count.eq(0),
+                ec01_lo.eq(0), ec01_hi.eq(0), ec01_carry.eq(0),
+                ec12_lo.eq(0), ec12_hi.eq(0), ec12_carry.eq(0),
+                gc_lo.eq(0), gc_hi.eq(0), gc_carry.eq(0),
                 gate_done_fast.eq(0),
             ]
         with m.Elif(~gate_active_fast & counting):
+            # Latch raw counter halves — NO addition in fast domain
             m.d.fast += [
                 counting.eq(0),
-                latched_edges.eq(edge_count_01 + edge_count_12),
-                latched_gate.eq(gate_count),
+                latched_ec01_lo.eq(ec01_lo),
+                latched_ec01_hi.eq(ec01_hi),
+                latched_ec12_lo.eq(ec12_lo),
+                latched_ec12_hi.eq(ec12_hi),
+                latched_gc_lo.eq(gc_lo),
+                latched_gc_hi.eq(gc_hi),
                 gate_done_fast.eq(1),
             ]
 
-        # Sync domain: state machine
+        # Sync domain: reassemble and sum (48 MHz — plenty of timing margin)
         result_edges = Signal(32)
         result_gate = Signal(32)
 
@@ -204,16 +259,20 @@ class FreqCounterSubtarget(Elaboratable):
 
             with m.State("WAIT_DONE"):
                 with m.If(gate_done_sync):
+                    # Reassemble and sum in sync domain (48 MHz, no timing pressure)
+                    edges_01 = Cat(latched_ec01_lo, latched_ec01_hi)
+                    edges_12 = Cat(latched_ec12_lo, latched_ec12_hi)
+                    gate_full = Cat(latched_gc_lo, latched_gc_hi)
+                    total_edges = Signal(32)
+                    m.d.comb += total_edges.eq(edges_01 + edges_12)
                     m.d.sync += [
-                        result_edges.eq(latched_edges),
-                        result_gate.eq(latched_gate),
+                        result_edges.eq(total_edges),
+                        result_gate.eq(gate_full),
                         byte_idx.eq(0),
-                        # Pack: [edges_32][gate_32][sample_freq_32] = 96 bits
-                        # Cat builds LSB-first, tx_shift[-8:] sends MSB first
                         tx_shift.eq(Cat(
                             Const(PLL_OUT_FREQ, 32),
-                            latched_gate,
-                            latched_edges,
+                            gate_full,
+                            total_edges,
                         )),
                     ]
                     m.next = "SEND_RESULT"

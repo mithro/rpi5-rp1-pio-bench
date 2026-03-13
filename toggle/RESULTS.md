@@ -45,12 +45,14 @@ Additional cross-validation: clkdiv=1 with delay=15 (expected 6.250 MHz) measure
 ## Instrument Capabilities
 
 ### Glasgow PLL+DDR Freq-Counter (primary instrument)
-- **Method:** Custom FPGA applet: iCE40 PLL at 132 MHz + DDR I/O (SB_IO DDR mode)
-- **Effective sample rate:** 264 MHz (samples on both PLL clock edges)
+- **Method:** Custom FPGA applet: iCE40 PLL at 168 MHz + DDR I/O (SB_IO DDR mode)
+- **Effective sample rate:** 336 MHz (samples on both PLL clock edges)
 - **Accurate range:** DC -- 100 MHz (all 9 clkdiv settings confirmed)
-- **Nyquist limit:** 132 MHz
-- **Measurement:** Two independent edge counters (rising/falling DDR boundaries), summed at gate end
+- **Nyquist limit:** 168 MHz
+- **Architecture:** Pipelined edge detection, 8-bit segmented counters (8-bit fast stage + 24-bit slow stage with registered carry), sync-domain addition
+- **Measurement:** Two independent edge counters (rising/falling DDR boundaries), summed at gate end in sync domain
 - **Repeatability:** 3 measurements per setting, variance < 3 edge counts in ~200M
+- **I/O speed limit:** 168 MHz PLL is the maximum reliable fabric clock; iCE40HX8K routing limits further increase
 
 ### RPi4 BCM2711 Edge Counter (GPIO4)
 - **Method:** mmap `/dev/gpiomem`, tight polling loop on GPLEV0 register
@@ -74,10 +76,11 @@ Additional cross-validation: clkdiv=1 with delay=15 (expected 6.250 MHz) measure
 
 **Glasgow PLL+DDR freq-counter (primary):**
 - Custom Glasgow applet: `toggle/glasgow_freq_counter/__init__.py`
-- iCE40 SB_PLL40_CORE: 48 MHz x 22 / 8 = 132 MHz (VCO = 1056 MHz)
+- iCE40 SB_PLL40_CORE: 48 MHz x 14 / 4 = 168 MHz (VCO = 672 MHz)
 - DDR via io.DDRBuffer with `i_domain="fast"`: SB_IO samples at both PLL clock edges
-- Edge detection: two XOR comparators per cycle (prev_falling^rising, rising^falling)
-- Two independent 32-bit counters (one per DDR boundary), summed at gate end
+- Pipelined edge detection: XOR output registered before counter enable (breaks timing path)
+- 8-bit segmented counters (8-bit fast stage + 24-bit slow stage with registered carry)
+- Two independent counters (one per DDR boundary), summed in sync domain (48 MHz)
 - Host sends 4-byte gate time (48 MHz ticks), FPGA returns 12-byte result
 - 3 measurements per clkdiv setting, 1-second gate time each
 
