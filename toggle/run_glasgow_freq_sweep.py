@@ -48,12 +48,13 @@ def start_toggle(clkdiv, delay=0, duration_ms=TOGGLE_DURATION_MS):
 
 def stop_toggle():
     """Kill any running toggle process."""
-    ssh_cmd(f"pkill -f toggle_rpi5 || true", timeout=10)
+    ssh_cmd(f"pkill -f toggle_rpi5 || true", timeout=30)
 
 
 def run_freq_counter(gate_ms=GATE_MS, count=3):
     """Run Glasgow freq-counter and return parsed JSON results."""
     cmd = (
+        f"GLASGOW_TOOLCHAIN=system "
         f"{GLASGOW_BIN} run freq-counter -V 3.3 --i A7 "
         f"-t {gate_ms} -n {count} --json"
     )
@@ -88,7 +89,7 @@ def run_sweep():
     print(f"Glasgow PLL Freq-Counter Sweep")
     print(f"{'='*70}")
     print(f"PIO clock: {PIO_CLOCK/1e6:.0f} MHz, Gate time: {GATE_MS} ms")
-    print(f"Glasgow sample rate: 528 MHz (264 MHz PLL + DDR), Nyquist: 264 MHz")
+    print(f"Glasgow sample rate: 576 MHz (288 MHz PLL + DDR), Nyquist: 288 MHz")
     print()
 
     all_tests = [{"clkdiv": cd, "delay": 0} for cd in CLKDIVS] + EXTRA_TESTS

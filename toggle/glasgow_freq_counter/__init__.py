@@ -23,18 +23,17 @@ from ... import *
 
 
 # PLL parameters: 48 MHz * (DIVF+1) / (DIVR+1) / 2^DIVQ
-# Target: 264 MHz  =>  48 * 22 / 1 / 4 = 264 MHz
-# VCO = 48 * 22 = 1056 MHz (within 533-1066 MHz range)
-# Highest reliable PLL frequency: 288 MHz shows intermittent gate
-# counter errors from timing violations. 264 MHz is 100% reliable.
-# Uses --timing-allow-fail since nextpnr reports ~194 MHz max but
-# the design works correctly up to 264 MHz empirically.
+# Target: 288 MHz  =>  48 * 12 / 1 / 2 = 288 MHz
+# VCO = 48 * 12 = 576 MHz (within 533-1066 MHz range)
+# Manual placement via --pre-pack constrains counter cells near the
+# DDR I/O pin, reducing routing delays. This enables reliable operation
+# at 288 MHz (336 MHz fails with counter corruption).
 PLL_DIVR = 0
-PLL_DIVF = 21
-PLL_DIVQ = 2
+PLL_DIVF = 11
+PLL_DIVQ = 1
 PLL_FILTER_RANGE = 1
-PLL_OUT_FREQ = 264_000_000
-EFFECTIVE_SAMPLE_FREQ = PLL_OUT_FREQ * 2  # 528 MHz with DDR
+PLL_OUT_FREQ = 288_000_000
+EFFECTIVE_SAMPLE_FREQ = PLL_OUT_FREQ * 2  # 576 MHz with DDR
 
 # Counter segmentation: 8-bit fast stage + 24-bit slow stage = 32 bits.
 COUNTER_LO_BITS = 8

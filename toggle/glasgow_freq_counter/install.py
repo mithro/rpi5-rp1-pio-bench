@@ -56,37 +56,40 @@ def install():
         shutil.copy2(pre_pack_src, applet_dir / "pre_pack.py")
         print(f"Installed pre-pack script")
 
-    # Patch assembly.py nextpnr_opts to allow timing failure.
-    # iCE40 timing models are conservative; designs often work beyond
-    # the reported Fmax. --timing-allow-fail lets us build the bitstream
-    # and test empirically.
+    # Patch assembly.py nextpnr_opts for manual placement + timing override.
+    # Uses native nextpnr-ice40 --pre-pack for placement constraints and
+    # --timing-allow-fail since we overclock beyond the timing model.
     assembly_file = glasgow_pkg / "hardware" / "assembly.py"
     assembly_src = assembly_file.read_text()
 
-    # Clean any previous patches
-    old_opts = None
-    for candidate in [
-        'nextpnr_opts="--placer heap --pre-pack',  # old pre-pack patch
-        'nextpnr_opts="--placer heap --timing-allow-fail"',  # already patched
-        'nextpnr_opts="--placer heap"',  # unpatched
-    ]:
-        if candidate in assembly_src:
-            old_opts = candidate
-            break
+    pre_pack_path = str(applet_dir / "pre_pack.py")
+    desired_opts = (
+        f'nextpnr_opts="--placer heap '
+        f'--pre-pack {pre_pack_path} '
+        f'--timing-allow-fail",'
+    )
 
-    new_opts = 'nextpnr_opts="--placer heap --timing-allow-fail"'
-    if old_opts and old_opts != new_opts:
-        # Find the full old string up to the closing quote+comma
-        idx = assembly_src.index(old_opts)
-        end = assembly_src.index('",', idx) + 2
-        old_full = assembly_src[idx:end]
-        assembly_src = assembly_src.replace(old_full, new_opts + ',')
-        assembly_file.write_text(assembly_src)
-        print(f"Patched assembly.py: {new_opts}")
-    elif old_opts == new_opts:
-        print("assembly.py already patched with --timing-allow-fail")
+    # Find and replace any existing nextpnr_opts line
+    import re
+    match = re.search(r'nextpnr_opts="[^"]*",', assembly_src)
+    if match:
+        old_full = match.group(0)
+        if old_full != desired_opts:
+            assembly_src = assembly_src.replace(old_full, desired_opts)
+            assembly_file.write_text(assembly_src)
+            print(f"Patched assembly.py nextpnr_opts with --pre-pack + --timing-allow-fail")
+        else:
+            print("assembly.py already patched")
     else:
         print("WARNING: Could not find nextpnr_opts to patch")
+
+    # Also set AMARANTH_USE_YOWASP=0 to force native toolchain
+    # Glasgow's toolchain finder checks for this
+    toolchain_file = glasgow_pkg / "hardware" / "toolchain.py"
+    if toolchain_file.exists():
+        tc_src = toolchain_file.read_text()
+        if "AMARANTH_USE_YOWASP" not in tc_src:
+            print("Note: Set AMARANTH_USE_YOWASP=0 in env to use native nextpnr")
 
     # Register entry point
     ep_text = entry_points.read_text()
