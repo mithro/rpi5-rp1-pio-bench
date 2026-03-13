@@ -23,16 +23,18 @@ from ... import *
 
 
 # PLL parameters: 48 MHz * (DIVF+1) / (DIVR+1) / 2^DIVQ
-# Target: 200 MHz  =>  48 * 50 / 3 / 4 = 200 MHz
-# VCO = 48 * 50 / 3 = 800 MHz (within 533-1066 MHz range)
-# nextpnr achieves ~194 MHz consistently for this design;
-# 200 MHz passes on favorable placement seeds.
-PLL_DIVR = 2
-PLL_DIVF = 49
+# Target: 264 MHz  =>  48 * 22 / 1 / 4 = 264 MHz
+# VCO = 48 * 22 = 1056 MHz (within 533-1066 MHz range)
+# Highest reliable PLL frequency: 288 MHz shows intermittent gate
+# counter errors from timing violations. 264 MHz is 100% reliable.
+# Uses --timing-allow-fail since nextpnr reports ~194 MHz max but
+# the design works correctly up to 264 MHz empirically.
+PLL_DIVR = 0
+PLL_DIVF = 21
 PLL_DIVQ = 2
 PLL_FILTER_RANGE = 1
-PLL_OUT_FREQ = 200_000_000
-EFFECTIVE_SAMPLE_FREQ = PLL_OUT_FREQ * 2  # 400 MHz with DDR
+PLL_OUT_FREQ = 264_000_000
+EFFECTIVE_SAMPLE_FREQ = PLL_OUT_FREQ * 2  # 528 MHz with DDR
 
 # Counter segmentation: 8-bit fast stage + 24-bit slow stage = 32 bits.
 COUNTER_LO_BITS = 8

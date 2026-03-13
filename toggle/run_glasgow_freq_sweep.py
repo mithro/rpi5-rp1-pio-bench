@@ -88,7 +88,7 @@ def run_sweep():
     print(f"Glasgow PLL Freq-Counter Sweep")
     print(f"{'='*70}")
     print(f"PIO clock: {PIO_CLOCK/1e6:.0f} MHz, Gate time: {GATE_MS} ms")
-    print(f"Glasgow sample rate: 400 MHz (200 MHz PLL + DDR), Nyquist: 200 MHz")
+    print(f"Glasgow sample rate: 528 MHz (264 MHz PLL + DDR), Nyquist: 264 MHz")
     print()
 
     all_tests = [{"clkdiv": cd, "delay": 0} for cd in CLKDIVS] + EXTRA_TESTS
