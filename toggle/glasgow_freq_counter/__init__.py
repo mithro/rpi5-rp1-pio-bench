@@ -1,0 +1,308 @@
+"""Glasgow frequency counter applet — PLL for high-speed edge counting.
+
+Measures toggle frequency on a single input pin using:
+  - iCE40 PLL: 48 MHz × 3 = 144 MHz fabric clock
+  - Edge counter: counts transitions in FPGA, sends count over USB
+
+This avoids the USB FIFO overrun issue of the standard analyzer applet
+and provides accurate frequency measurement up to ~72 MHz (Nyquist at 144 MHz).
+
+Protocol:
+  Host → FPGA: 4 bytes (gate_time in 48 MHz cycles, big-endian uint32)
+  FPGA → Host: 12 bytes (edge_count uint32 BE, gate_cycles uint32 BE, sample_freq uint32 BE)
+
+The sample_freq reported is the PLL frequency (144 MHz).
+"""
+
+import logging
+import struct
+import argparse
+
+from amaranth import *
+from amaranth.lib import io
+from amaranth.lib.cdc import FFSynchronizer
+
+from ... import *
+
+
+# PLL parameters: 48 MHz * (DIVF+1) / (DIVR+1) / 2^DIVQ
+# Target: 144 MHz  =>  48 * 12 / 1 / 4 = 144 MHz
+# VCO = 48 * 12 = 576 MHz (within 533-1066 MHz range)
+# Fabric max from nextpnr: ~157 MHz, so 144 MHz has good margin.
+PLL_DIVR = 0
+PLL_DIVF = 11
+PLL_DIVQ = 2
+PLL_FILTER_RANGE = 1
+PLL_OUT_FREQ = 144_000_000  # 144 MHz fabric clock
+
+
+class FreqCounterSubtarget(Elaboratable):
+    """FPGA gateware for high-speed frequency counting.
+
+    Runs a PLL at 144 MHz and samples the input pin in that fast domain.
+    Counts edges during a host-specified gate period, then sends
+    the count back over the USB FIFO.
+    """
+
+    def __init__(self, ports, in_fifo, out_fifo):
+        self.ports = ports
+        self.in_fifo = in_fifo
+        self.out_fifo = out_fifo
+
+    def elaborate(self, platform):
+        m = Module()
+
+        # === Fast clock domain via PLL (144 MHz) ===
+        m.domains += ClockDomain("fast")
+        pll_locked = Signal()
+
+        m.submodules.pll = Instance("SB_PLL40_CORE",
+            p_FEEDBACK_PATH="SIMPLE",
+            p_PLLOUT_SELECT="GENCLK",
+            p_DIVR=PLL_DIVR,
+            p_DIVF=PLL_DIVF,
+            p_DIVQ=PLL_DIVQ,
+            p_FILTER_RANGE=PLL_FILTER_RANGE,
+            i_REFERENCECLK=ClockSignal("sync"),
+            o_PLLOUTCORE=ClockSignal("fast"),
+            i_RESETB=Const(1),
+            i_BYPASS=Const(0),
+            o_LOCK=pll_locked,
+        )
+
+        # === Input buffer (same pattern as Glasgow analyzer applet) ===
+        m.submodules.i_buffer = i_buffer = io.Buffer("i", self.ports.i)
+
+        # Synchronize input into fast (PLL) domain for 144 MHz sampling
+        pin_fast = Signal()
+        pin_fast_prev = Signal()
+        m.submodules.cdc_pin = FFSynchronizer(i_buffer.i, pin_fast, o_domain="fast")
+        m.d.fast += pin_fast_prev.eq(pin_fast)
+
+        # Edge detected when pin changes between consecutive fast clocks
+        edge_detected = Signal()
+        m.d.comb += edge_detected.eq(pin_fast != pin_fast_prev)
+
+        # === Edge counter (32-bit, sufficient for 1s gate at 100 MHz) ===
+        edge_count = Signal(32)
+        gate_count = Signal(32)  # actual gate cycles in fast domain
+        counting = Signal()
+
+        with m.If(counting):
+            m.d.fast += gate_count.eq(gate_count + 1)
+            with m.If(edge_detected):
+                m.d.fast += edge_count.eq(edge_count + 1)
+
+        # === Gate control (sync domain) ===
+        gate_time = Signal(32)
+        gate_timer = Signal(32)
+        byte_idx = Signal(range(12))
+
+        # CDC: gate signals from sync to fast domain
+        gate_active_sync = Signal()
+        gate_active_fast = Signal()
+        m.submodules.cdc_gate = FFSynchronizer(
+            gate_active_sync, gate_active_fast, o_domain="fast")
+
+        # CDC: latch counter when gate ends (fast → sync)
+        gate_done_fast = Signal()
+        gate_done_sync = Signal()
+        latched_edges = Signal(32)
+        latched_gate = Signal(32)
+
+        m.submodules.cdc_done = FFSynchronizer(
+            gate_done_fast, gate_done_sync, o_domain="sync")
+
+        # Fast domain: counting logic
+        with m.If(gate_active_fast & ~counting):
+            m.d.fast += [
+                counting.eq(1),
+                edge_count.eq(0),
+                gate_count.eq(0),
+                gate_done_fast.eq(0),
+            ]
+        with m.Elif(~gate_active_fast & counting):
+            m.d.fast += [
+                counting.eq(0),
+                latched_edges.eq(edge_count),
+                latched_gate.eq(gate_count),
+                gate_done_fast.eq(1),
+            ]
+
+        # Sync domain: state machine
+        result_edges = Signal(32)
+        result_gate = Signal(32)
+
+        # Shift registers for USB protocol
+        rx_shift = Signal(32)
+        tx_shift = Signal(96)
+
+        with m.FSM(domain="sync"):
+            with m.State("IDLE"):
+                m.d.sync += byte_idx.eq(0)
+                m.d.comb += self.out_fifo.r_en.eq(self.out_fifo.r_rdy)
+                with m.If(self.out_fifo.r_rdy):
+                    m.d.sync += rx_shift.eq(
+                        Cat(self.out_fifo.r_data, rx_shift[:-8]))
+                    with m.If(byte_idx == 3):
+                        m.next = "START_GATE"
+                    with m.Else():
+                        m.d.sync += byte_idx.eq(byte_idx + 1)
+
+            with m.State("START_GATE"):
+                m.d.sync += [
+                    gate_time.eq(rx_shift),
+                    gate_timer.eq(rx_shift),
+                    gate_active_sync.eq(1),
+                ]
+                m.next = "COUNTING"
+
+            with m.State("COUNTING"):
+                m.d.sync += gate_timer.eq(gate_timer - 1)
+                with m.If(gate_timer == 0):
+                    m.d.sync += gate_active_sync.eq(0)
+                    m.next = "WAIT_DONE"
+
+            with m.State("WAIT_DONE"):
+                with m.If(gate_done_sync):
+                    m.d.sync += [
+                        result_edges.eq(latched_edges),
+                        result_gate.eq(latched_gate),
+                        byte_idx.eq(0),
+                        # Pack: [edges_32][gate_32][sample_freq_32] = 96 bits
+                        # Cat builds LSB-first, tx_shift[-8:] sends MSB first
+                        tx_shift.eq(Cat(
+                            Const(PLL_OUT_FREQ, 32),
+                            latched_gate,
+                            latched_edges,
+                        )),
+                    ]
+                    m.next = "SEND_RESULT"
+
+            with m.State("SEND_RESULT"):
+                m.d.comb += [
+                    self.in_fifo.w_data.eq(tx_shift[-8:]),
+                    self.in_fifo.w_en.eq(self.in_fifo.w_rdy),
+                ]
+                with m.If(self.in_fifo.w_rdy):
+                    m.d.sync += tx_shift.eq(tx_shift << 8)
+                    with m.If(byte_idx == 11):
+                        m.next = "IDLE"
+                    with m.Else():
+                        m.d.sync += byte_idx.eq(byte_idx + 1)
+
+        return m
+
+
+class FreqCounterInterface:
+    """Host-side interface for the frequency counter."""
+
+    def __init__(self, interface, logger):
+        self.lower = interface
+        self.logger = logger
+
+    async def measure(self, gate_cycles):
+        """Measure frequency over gate_cycles (in 48 MHz system clock cycles).
+
+        Returns (edge_count, gate_cycles_actual, sample_freq_hz).
+        """
+        await self.lower.write(struct.pack(">I", gate_cycles))
+        await self.lower.flush()
+
+        data = await self.lower.read(12)
+        if len(data) < 12:
+            raise RuntimeError(f"Expected 12 bytes, got {len(data)}")
+
+        edge_count, gate_actual, sample_freq = struct.unpack(">III", bytes(data))
+        return edge_count, gate_actual, sample_freq
+
+
+class FreqCounterApplet(GlasgowApplet):
+    logger = logging.getLogger(__name__)
+    help = "measure signal frequency using PLL + edge counter"
+    description = """
+    Measure the frequency of a digital signal using a high-speed edge counter.
+
+    Uses the iCE40 PLL to generate a 144 MHz sampling clock (3x the base
+    48 MHz), providing accurate frequency measurement up to ~72 MHz
+    (Nyquist limit at 144 MHz). The FPGA counts edges internally and
+    reports the count, avoiding the FIFO overrun issues of the standard
+    analyzer applet.
+    """
+    required_revision = "C0"
+
+    @classmethod
+    def add_build_arguments(cls, parser, access):
+        super().add_build_arguments(parser, access)
+        access.add_pins_argument(parser, "i", default="A7")
+
+    def build(self, target, args):
+        self.mux_interface = iface = target.multiplexer.claim_interface(self, args)
+        iface.add_subtarget(FreqCounterSubtarget(
+            ports=iface.get_port_group(i=args.i),
+            in_fifo=iface.get_in_fifo(),
+            out_fifo=iface.get_out_fifo(),
+        ))
+
+    @classmethod
+    def add_run_arguments(cls, parser, access):
+        super().add_run_arguments(parser, access)
+
+    async def run(self, device, args):
+        iface = await device.demultiplexer.claim_interface(
+            self, self.mux_interface, args)
+        return FreqCounterInterface(iface, self.logger)
+
+    @classmethod
+    def add_interact_arguments(cls, parser):
+        parser.add_argument(
+            "-t", "--gate-ms", metavar="MS", type=float, default=1000,
+            help="gate time in milliseconds (default: 1000)")
+        parser.add_argument(
+            "-n", "--count", metavar="N", type=int, default=1,
+            help="number of measurements (default: 1)")
+        parser.add_argument(
+            "--json", action="store_true",
+            help="output results as JSON")
+
+    async def interact(self, device, args, iface):
+        import json as json_mod
+
+        gate_cycles = int(args.gate_ms / 1000.0 * 48_000_000)
+        results = []
+
+        for i in range(args.count):
+            edges, gate_actual, sample_freq = await iface.measure(gate_cycles)
+
+            # Frequency = edges / 2 / (gate_actual / sample_freq)
+            # gate_actual is in PLL cycles (144 MHz), sample_freq = 144 MHz
+            gate_seconds = gate_actual / sample_freq if sample_freq > 0 else 0
+            if edges > 0 and gate_seconds > 0:
+                freq_hz = edges / (2.0 * gate_seconds)
+            else:
+                freq_hz = 0.0
+
+            result = {
+                "edges": edges,
+                "gate_cycles": gate_actual,
+                "sample_freq_hz": sample_freq,
+                "gate_seconds": gate_seconds,
+                "freq_hz": freq_hz,
+            }
+            results.append(result)
+
+            if not args.json:
+                if freq_hz >= 1e6:
+                    freq_str = f"{freq_hz/1e6:.3f} MHz"
+                elif freq_hz >= 1e3:
+                    freq_str = f"{freq_hz/1e3:.3f} kHz"
+                else:
+                    freq_str = f"{freq_hz:.1f} Hz"
+
+                self.logger.info(
+                    f"[{i+1}/{args.count}] edges={edges}, "
+                    f"gate={gate_seconds*1000:.1f}ms, "
+                    f"freq={freq_str}")
+
+        if args.json:
+            print(json_mod.dumps(results, indent=2))
