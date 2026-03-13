@@ -1,8 +1,10 @@
 # Hardware Setup
 
-There are two Raspberry Pi devices that you are able to access:
-
-You need to ssh into the devices as the user tim and you have root access.
+This repository benchmarks the RP1 PIO block on the Raspberry Pi 5. The primary
+test hardware is a pair of Raspberry Pi devices with Digilent Pmod HAT Adapters
+(rpi5-pmod and rpi4-pmod) connected via jumper cables, with a Glasgow Interface
+Explorer for signal observation. Additional NeTV2-based hardware (rpi5-netv2,
+rpi3-netv2) is available for JTAG-specific testing.
 
 Each device has a set of interfaces (eth0 and wlan0) with both IPv4 and IPv6.
 To use a specific interface and IP you can use:
@@ -12,11 +14,18 @@ To use a specific interface and IP you can use:
  * eth0.\<hostname\> -- Both IPv4 and IPv6 addresses.
  * \<hostname\> -- All IPv4 and IPv6 addresses.
 
+You need to ssh into the devices as the user `tim` and you have root access via
+`sudo` (except rpi3-netv2 which uses user `pi`).
+
 ---
 
-# rpi5-pmod.iot.welland.mithis.com
+# PRIMARY: rpi5-pmod.iot.welland.mithis.com
 
-Raspberry Pi 5 Model B Rev 1.1 with a Digilent Pmod HAT Adapter.
+Raspberry Pi 5 Model B Rev 1.1 with a Digilent Pmod HAT Adapter and a Glasgow
+Interface Explorer (revC3) connected via USB. This is the primary PIO
+benchmarking device -- it has the RP1 southbridge with a PIO block.
+
+Login: `ssh tim@rpi5-pmod.iot.welland.mithis.com`
 
 | Property        | Value                                            |
 |-----------------|--------------------------------------------------|
@@ -31,9 +40,129 @@ Raspberry Pi 5 Model B Rev 1.1 with a Digilent Pmod HAT Adapter.
 | I2C             | `/dev/i2c-13`, `/dev/i2c-14`                     |
 | HAT EEPROM      | Vendor: Digilent, Product: Pmod HAT Adaptor      |
 
-# rpi4-pmod.iot.welland.mithis.com
+## Glasgow Interface Explorer
 
-Raspberry Pi 4 Model B Rev 1.5 with a Digilent Pmod HAT Adapter.
+A Glasgow revC3 (serial `C3-20230729T212534Z`) is connected via USB to the
+rpi5-pmod. The Glasgow's 16 I/O pins (ports A and B, 8 pins each) are connected
+to the RPi5 GPIO header via jumper wires. This allows passive observation of
+PIO-driven signals on the inter-RPi connection.
+
+| Property        | Value                                            |
+|-----------------|--------------------------------------------------|
+| Revision        | revC3                                            |
+| Serial          | C3-20230729T212534Z                              |
+| USB ID          | 20b7:9db1 (Qi Hardware)                          |
+| Firmware        | API level 5                                      |
+| I/O Ports       | A (8 pins), B (8 pins)                           |
+| I/O Voltage     | Programmable, set to 3.3V for RPi GPIO           |
+| Software        | Glasgow 0.1.dev2829 (installed via `uv tool`)    |
+
+### Glasgow CLI Usage
+
+```bash
+# Glasgow is installed as a uv tool
+export PATH=$HOME/.local/bin:$PATH
+
+# List connected devices
+glasgow list
+
+# Read all pins (high-impedance input)
+glasgow run control-gpio -V 3.3 \
+    --pins 'A0,A1,A2,A3,A4,A5,A6,A7,B0,B1,B2,B3,B4,B5,B6,B7' \
+    A0 A1 A2 A3 A4 A5 A6 A7 B0 B1 B2 B3 B4 B5 B6 B7
+
+# Drive a pin high (strong drive)
+glasgow run control-gpio -V 3.3 --pins 'A0' A0=1
+
+# Drive a pin low (strong drive)
+glasgow run control-gpio -V 3.3 --pins 'A0' A0=0
+
+# Weak pull-up / pull-down
+glasgow run control-gpio -V 3.3 --pins 'A0' A0=H   # weak pull-up
+glasgow run control-gpio -V 3.3 --pins 'A0' A0=L   # weak pull-down
+
+# Capture logic analyser traces
+glasgow run analyzer ...
+```
+
+**Note:** Glasgow commands require root access (`sudo`) or udev rules. A udev
+rule is installed at `/etc/udev/rules.d/90-glasgow.rules` that grants access
+to the `plugdev` group (which `tim` is a member of).
+
+### Glasgow-to-RPi GPIO Pin Mapping
+
+The Glasgow I/O pins are connected to the RPi5 GPIO header via jumper wires.
+The connections were discovered programmatically using `discover_glasgow_pins.py`.
+
+#### Port A
+
+| Glasgow Pin | BCM GPIO | RPi Header Pin | Pmod Pin  | Pmod Function              |
+|-------------|----------|----------------|-----------|----------------------------|
+| A0          | GPIO16   | Pin 36         | JC1       | UART0_CTS / SPI1_CE2      |
+| A1          | GPIO20   | Pin 38         | JA9       | PCM_DIN / SPI1_MOSI       |
+| A2          | GPIO21   | Pin 40         | JA8       | PCM_DOUT / SPI1_SCLK      |
+| A3          | GPIO26   | Pin 37         | JB7       | GPIO                       |
+| A4          | GPIO19   | Pin 35         | JA7       | PCM_FS / PWM1 / SPI1_MISO |
+| A5          | GPIO13   | Pin 33         | JB8       | PWM1                       |
+| A6          | GPIO6    | Pin 31         | JC10      | GPCLK2                     |
+| A7          | GPIO5    | Pin 29         | JC9       | GPCLK1                     |
+
+#### Port B
+
+| Glasgow Pin | BCM GPIO | RPi Header Pin | Pmod Pin  | Pmod Function              |
+|-------------|----------|----------------|-----------|----------------------------|
+| B0          | GPIO14   | Pin 8          | JC2       | UART0_TXD                  |
+| B1          | GPIO15   | Pin 10         | JC3       | UART0_RXD                  |
+| B2          | GPIO18   | Pin 12         | JA10      | PCM_CLK / PWM0 / SPI1_CE0 |
+| B3          | GPIO25   | Pin 22         | --        | (not on Pmod HAT)          |
+| B4          | GPIO8    | Pin 24         | JA1       | SPI0_CE0                   |
+| B5          | GPIO7    | Pin 26         | JB1       | SPI0_CE1                   |
+| B6          | GPIO3    | Pin 5          | JB9       | I2C1_SCL (1.8kΩ pull-up)  |
+| B7          | GPIO2    | Pin 3          | JB10      | I2C1_SDA (1.8kΩ pull-up)  |
+
+#### Sorted by RPi Header Pin (physical wiring order)
+
+| RPi Header Pin | BCM GPIO | Glasgow Pin | Pmod Pin  |
+|----------------|----------|-------------|-----------|
+| Pin 3          | GPIO2    | B7          | JB10      |
+| Pin 5          | GPIO3    | B6          | JB9       |
+| Pin 8          | GPIO14   | B0          | JC2       |
+| Pin 10         | GPIO15   | B1          | JC3       |
+| Pin 12         | GPIO18   | B2          | JA10      |
+| Pin 22         | GPIO25   | B3          | --        |
+| Pin 24         | GPIO8    | B4          | JA1       |
+| Pin 26         | GPIO7    | B5          | JB1       |
+| Pin 29         | GPIO5    | A7          | JC9       |
+| Pin 31         | GPIO6    | A6          | JC10      |
+| Pin 33         | GPIO13   | A5          | JB8       |
+| Pin 35         | GPIO19   | A4          | JA7       |
+| Pin 36         | GPIO16   | A0          | JC1       |
+| Pin 37         | GPIO26   | A3          | JB7       |
+| Pin 38         | GPIO20   | A1          | JA9       |
+| Pin 40         | GPIO21   | A2          | JA8       |
+
+#### Notes
+
+- **GPIO25 (B3)** is connected to RPi header pin 22 but is **not** routed to
+  any Pmod connector on the Pmod HAT. It is one of five "unused" GPIOs that
+  the Pmod HAT leaves unconnected. The other four (GPIO22↔GPIO27 and
+  GPIO23↔GPIO24) are wired as loopback pairs on the RPi5 header.
+- **15 of the 16 Glasgow pins** are tapping signals that also go through the
+  Pmod connectors to the inter-RPi jumper cables (to rpi4-pmod).
+- **GPIO2/GPIO3 (B7/B6)** have 1.8kΩ hardware pull-up resistors on the RPi
+  board itself (I2C1 bus). The Glasgow will see these as weakly pulled high
+  when not actively driven.
+
+---
+
+# PRIMARY: rpi4-pmod.iot.welland.mithis.com
+
+Raspberry Pi 4 Model B Rev 1.5 with a Digilent Pmod HAT Adapter. This device
+serves as the other end of the inter-RPi Pmod connection for PIO benchmarking
+-- the RPi5 drives PIO signals through the Pmod connectors, and the RPi4
+receives them (or vice versa).
+
+Login: `ssh tim@rpi4-pmod.iot.welland.mithis.com`
 
 | Property        | Value                                            |
 |-----------------|--------------------------------------------------|
@@ -76,65 +205,78 @@ which is the authoritative software definition. All GPIO numbers use BCM numberi
 JA top row (pins 1-6) carries SPI0 with chip select CE0.
 JA bottom row (pins 7-12) carries PCM/PWM signals.
 
-| Pmod Pin | BCM GPIO | RPi 40-pin Header | Alternate Function(s)          |
-|----------|----------|--------------------|--------------------------------|
-| JA1      | GPIO8    | Pin 24             | **SPI0_CE0**                   |
-| JA2      | GPIO10   | Pin 19             | **SPI0_MOSI**                  |
-| JA3      | GPIO9    | Pin 21             | **SPI0_MISO**                  |
-| JA4      | GPIO11   | Pin 23             | **SPI0_SCLK**                  |
-| JA5      | GND      | Pin 25 (GND)       | Ground                         |
-| JA6      | VCC      | 3.3V               | Power (3.3V)                   |
-| JA7      | GPIO19   | Pin 35             | PCM_FS / PWM1 / SPI1_MISO     |
-| JA8      | GPIO21   | Pin 40             | PCM_DOUT / GPCLK1 / SPI1_SCLK |
-| JA9      | GPIO20   | Pin 38             | PCM_DIN / GPCLK0 / SPI1_MOSI  |
-| JA10     | GPIO18   | Pin 12             | PCM_CLK / PWM0 / SPI1_CE0     |
-| JA11     | GND      | Pin 39 (GND)       | Ground                         |
-| JA12     | VCC      | 3.3V               | Power (3.3V)                   |
+| Pmod Pin | BCM GPIO | RPi 40-pin Header | Alternate Function(s)          | Glasgow |
+|----------|----------|--------------------|--------------------------------|---------|
+| JA1      | GPIO8    | Pin 24             | **SPI0_CE0**                   | B4      |
+| JA2      | GPIO10   | Pin 19             | **SPI0_MOSI**                  | --      |
+| JA3      | GPIO9    | Pin 21             | **SPI0_MISO**                  | --      |
+| JA4      | GPIO11   | Pin 23             | **SPI0_SCLK**                  | --      |
+| JA5      | GND      | Pin 25 (GND)       | Ground                         | --      |
+| JA6      | VCC      | 3.3V               | Power (3.3V)                   | --      |
+| JA7      | GPIO19   | Pin 35             | PCM_FS / PWM1 / SPI1_MISO     | A4      |
+| JA8      | GPIO21   | Pin 40             | PCM_DOUT / GPCLK1 / SPI1_SCLK | A2      |
+| JA9      | GPIO20   | Pin 38             | PCM_DIN / GPCLK0 / SPI1_MOSI  | A1      |
+| JA10     | GPIO18   | Pin 12             | PCM_CLK / PWM0 / SPI1_CE0     | B2      |
+| JA11     | GND      | Pin 39 (GND)       | Ground                         | --      |
+| JA12     | VCC      | 3.3V               | Power (3.3V)                   | --      |
 
 ### Pmod Connector JB (SPI + I2C + GPIO)
 
 JB top row (pins 1-6) carries SPI0 with chip select CE1 (shares MOSI/MISO/CLK with JA).
 JB bottom row (pins 7-12) carries I2C1 on pins 9-10.
 
-| Pmod Pin | BCM GPIO | RPi 40-pin Header | Alternate Function(s)          |
-|----------|----------|--------------------|--------------------------------|
-| JB1      | GPIO7    | Pin 26             | **SPI0_CE1**                   |
-| JB2      | GPIO10   | Pin 19             | **SPI0_MOSI** (shared with JA) |
-| JB3      | GPIO9    | Pin 21             | **SPI0_MISO** (shared with JA) |
-| JB4      | GPIO11   | Pin 23             | **SPI0_SCLK** (shared with JA) |
-| JB5      | GND      | Pin 25 (GND)       | Ground                         |
-| JB6      | VCC      | 3.3V               | Power (3.3V)                   |
-| JB7      | GPIO26   | Pin 37             | GPIO only                      |
-| JB8      | GPIO13   | Pin 33             | PWM1                           |
-| JB9      | GPIO3    | Pin 5              | **I2C1_SCL** (1.8kΩ pull-up)  |
-| JB10     | GPIO2    | Pin 3              | **I2C1_SDA** (1.8kΩ pull-up)  |
-| JB11     | GND      | Pin 39 (GND)       | Ground                         |
-| JB12     | VCC      | 3.3V               | Power (3.3V)                   |
+| Pmod Pin | BCM GPIO | RPi 40-pin Header | Alternate Function(s)          | Glasgow |
+|----------|----------|--------------------|--------------------------------|---------|
+| JB1      | GPIO7    | Pin 26             | **SPI0_CE1**                   | B5      |
+| JB2      | GPIO10   | Pin 19             | **SPI0_MOSI** (shared with JA) | --      |
+| JB3      | GPIO9    | Pin 21             | **SPI0_MISO** (shared with JA) | --      |
+| JB4      | GPIO11   | Pin 23             | **SPI0_SCLK** (shared with JA) | --      |
+| JB5      | GND      | Pin 25 (GND)       | Ground                         | --      |
+| JB6      | VCC      | 3.3V               | Power (3.3V)                   | --      |
+| JB7      | GPIO26   | Pin 37             | GPIO only                      | A3      |
+| JB8      | GPIO13   | Pin 33             | PWM1                           | A5      |
+| JB9      | GPIO3    | Pin 5              | **I2C1_SCL** (1.8kΩ pull-up)  | B6      |
+| JB10     | GPIO2    | Pin 3              | **I2C1_SDA** (1.8kΩ pull-up)  | B7      |
+| JB11     | GND      | Pin 39 (GND)       | Ground                         | --      |
+| JB12     | VCC      | 3.3V               | Power (3.3V)                   | --      |
 
 ### Pmod Connector JC (UART + GPIO)
 
 JC top row (pins 1-6) carries UART0.
 JC bottom row (pins 7-12) carries GPCLK/PWM signals.
 
-| Pmod Pin | BCM GPIO | RPi 40-pin Header | Alternate Function(s)          |
-|----------|----------|--------------------|--------------------------------|
-| JC1      | GPIO16   | Pin 36             | **UART0_CTS** / SPI1_CE2      |
-| JC2      | GPIO14   | Pin 8              | **UART0_TXD**                  |
-| JC3      | GPIO15   | Pin 10             | **UART0_RXD**                  |
-| JC4      | GPIO17   | Pin 11             | **UART0_RTS** / SPI1_CE1      |
-| JC5      | GND      | Pin 25 (GND)       | Ground                         |
-| JC6      | VCC      | 3.3V               | Power (3.3V)                   |
-| JC7      | GPIO4    | Pin 7              | GPCLK0                         |
-| JC8      | GPIO12   | Pin 32             | PWM0                           |
-| JC9      | GPIO5    | Pin 29             | GPCLK1                         |
-| JC10     | GPIO6    | Pin 31             | GPCLK2                         |
-| JC11     | GND      | Pin 39 (GND)       | Ground                         |
-| JC12     | VCC      | 3.3V               | Power (3.3V)                   |
+| Pmod Pin | BCM GPIO | RPi 40-pin Header | Alternate Function(s)          | Glasgow |
+|----------|----------|--------------------|--------------------------------|---------|
+| JC1      | GPIO16   | Pin 36             | **UART0_CTS** / SPI1_CE2      | A0      |
+| JC2      | GPIO14   | Pin 8              | **UART0_TXD**                  | B0      |
+| JC3      | GPIO15   | Pin 10             | **UART0_RXD**                  | B1      |
+| JC4      | GPIO17   | Pin 11             | **UART0_RTS** / SPI1_CE1      | --      |
+| JC5      | GND      | Pin 25 (GND)       | Ground                         | --      |
+| JC6      | VCC      | 3.3V               | Power (3.3V)                   | --      |
+| JC7      | GPIO4    | Pin 7              | GPCLK0                         | --      |
+| JC8      | GPIO12   | Pin 32             | PWM0                           | --      |
+| JC9      | GPIO5    | Pin 29             | GPCLK1                         | A7      |
+| JC10     | GPIO6    | Pin 31             | GPCLK2                         | A6      |
+| JC11     | GND      | Pin 39 (GND)       | Ground                         | --      |
+| JC12     | VCC      | 3.3V               | Power (3.3V)                   | --      |
 
 ### Unused GPIO Pins
 
-Five RPi GPIO pins are **not connected** to any Pmod connector and remain available
-for other purposes: **GPIO22**, **GPIO23**, **GPIO24**, **GPIO25**, **GPIO27**.
+Five RPi GPIO pins are **not connected** to any Pmod connector: **GPIO22**,
+**GPIO23**, **GPIO24**, **GPIO25**, **GPIO27**.
+
+Of these, **GPIO25** is connected to Glasgow pin **B3** (RPi header pin 22).
+
+The remaining four are connected in two loopback pairs via jumper wires on the
+RPi5 GPIO header (discovered using `discover_gpio_pairs.py`):
+
+| Pair | Pin A  | Header Pin | Pin B  | Header Pin |
+|------|--------|------------|--------|------------|
+| 1    | GPIO22 | Pin 15     | GPIO27 | Pin 13     |
+| 2    | GPIO23 | Pin 16     | GPIO24 | Pin 18     |
+
+These loopback pairs can be used for self-test purposes (driving one pin and
+reading the other to verify GPIO functionality without external hardware).
 
 ### Shared Bus Constraints
 
@@ -334,8 +476,9 @@ supports specific Pmod interface types:
 
 # Inter-RPi Jumper Cable Connections
 
-The two RPi devices are connected via jumper cables between their Pmod connectors.
-All three ports are connected straight-through: JA-to-JA, JB-to-JB, and JC-to-JC.
+The two RPi Pmod devices (rpi5-pmod and rpi4-pmod) are connected via jumper cables
+between their Pmod connectors. All three ports are connected straight-through:
+JA-to-JA, JB-to-JB, and JC-to-JC.
 
 Since both RPi devices use the same Pmod HAT Adapter, the **same BCM GPIO number**
 on each side is connected together. For example, RPi5 GPIO8 (JA pin 1) is wired
@@ -345,86 +488,463 @@ to RPi4 GPIO8 (JA pin 1).
 
 ### JA connections (RPi5 ↔ RPi4)
 
-| Pmod Pin | Signal      | RPi5 GPIO | RPi4 GPIO | Notes                    |
-|----------|-------------|-----------|-----------|--------------------------|
-| JA1      | SPI0_CE0    | GPIO8     | GPIO8     | SPI chip select 0        |
-| JA2      | SPI0_MOSI   | GPIO10    | GPIO10    | Shared with JB2          |
-| JA3      | SPI0_MISO   | GPIO9     | GPIO9     | Shared with JB3          |
-| JA4      | SPI0_SCLK   | GPIO11    | GPIO11    | Shared with JB4          |
-| JA5      | GND         | --        | --        | Ground                   |
-| JA6      | VCC         | --        | --        | 3.3V (DO NOT jumper VCC) |
-| JA7      | PCM_FS/PWM1 | GPIO19    | GPIO19    |                          |
-| JA8      | PCM_DOUT    | GPIO21    | GPIO21    |                          |
-| JA9      | PCM_DIN     | GPIO20    | GPIO20    |                          |
-| JA10     | PCM_CLK/PWM0| GPIO18    | GPIO18    |                          |
-| JA11     | GND         | --        | --        | Ground                   |
-| JA12     | VCC         | --        | --        | 3.3V (DO NOT jumper VCC) |
+| Pmod Pin | Signal      | RPi5 GPIO | RPi4 GPIO | Glasgow | Notes                    |
+|----------|-------------|-----------|-----------|---------|--------------------------|
+| JA1      | SPI0_CE0    | GPIO8     | GPIO8     | B4      | SPI chip select 0        |
+| JA2      | SPI0_MOSI   | GPIO10    | GPIO10    | --      | Shared with JB2          |
+| JA3      | SPI0_MISO   | GPIO9     | GPIO9     | --      | Shared with JB3          |
+| JA4      | SPI0_SCLK   | GPIO11    | GPIO11    | --      | Shared with JB4          |
+| JA5      | GND         | --        | --        | --      | Ground                   |
+| JA6      | VCC         | --        | --        | --      | 3.3V (DO NOT jumper VCC) |
+| JA7      | PCM_FS/PWM1 | GPIO19    | GPIO19    | A4      |                          |
+| JA8      | PCM_DOUT    | GPIO21    | GPIO21    | A2      |                          |
+| JA9      | PCM_DIN     | GPIO20    | GPIO20    | A1      |                          |
+| JA10     | PCM_CLK/PWM0| GPIO18    | GPIO18    | B2      |                          |
+| JA11     | GND         | --        | --        | --      | Ground                   |
+| JA12     | VCC         | --        | --        | --      | 3.3V (DO NOT jumper VCC) |
 
 ### JB connections (RPi5 ↔ RPi4)
 
-| Pmod Pin | Signal      | RPi5 GPIO | RPi4 GPIO | Notes                    |
-|----------|-------------|-----------|-----------|--------------------------|
-| JB1      | SPI0_CE1    | GPIO7     | GPIO7     | SPI chip select 1        |
-| JB2      | SPI0_MOSI   | GPIO10    | GPIO10    | Shared with JA2          |
-| JB3      | SPI0_MISO   | GPIO9     | GPIO9     | Shared with JA3          |
-| JB4      | SPI0_SCLK   | GPIO11    | GPIO11    | Shared with JA4          |
-| JB5      | GND         | --        | --        | Ground                   |
-| JB6      | VCC         | --        | --        | 3.3V (DO NOT jumper VCC) |
-| JB7      | GPIO        | GPIO26    | GPIO26    |                          |
-| JB8      | PWM1        | GPIO13    | GPIO13    |                          |
-| JB9      | I2C1_SCL    | GPIO3     | GPIO3     | Has 1.8kΩ pull-up        |
-| JB10     | I2C1_SDA    | GPIO2     | GPIO2     | Has 1.8kΩ pull-up        |
-| JB11     | GND         | --        | --        | Ground                   |
-| JB12     | VCC         | --        | --        | 3.3V (DO NOT jumper VCC) |
+| Pmod Pin | Signal      | RPi5 GPIO | RPi4 GPIO | Glasgow | Notes                    |
+|----------|-------------|-----------|-----------|---------|--------------------------|
+| JB1      | SPI0_CE1    | GPIO7     | GPIO7     | B5      | SPI chip select 1        |
+| JB2      | SPI0_MOSI   | GPIO10    | GPIO10    | --      | Shared with JA2          |
+| JB3      | SPI0_MISO   | GPIO9     | GPIO9     | --      | Shared with JA3          |
+| JB4      | SPI0_SCLK   | GPIO11    | GPIO11    | --      | Shared with JA4          |
+| JB5      | GND         | --        | --        | --      | Ground                   |
+| JB6      | VCC         | --        | --        | --      | 3.3V (DO NOT jumper VCC) |
+| JB7      | GPIO        | GPIO26    | GPIO26    | A3      |                          |
+| JB8      | PWM1        | GPIO13    | GPIO13    | A5      |                          |
+| JB9      | I2C1_SCL    | GPIO3     | GPIO3     | B6      | Has 1.8kΩ pull-up        |
+| JB10     | I2C1_SDA    | GPIO2     | GPIO2     | B7      | Has 1.8kΩ pull-up        |
+| JB11     | GND         | --        | --        | --      | Ground                   |
+| JB12     | VCC         | --        | --        | --      | 3.3V (DO NOT jumper VCC) |
 
 ### JC connections (RPi5 ↔ RPi4)
 
-| Pmod Pin | Signal      | RPi5 GPIO | RPi4 GPIO | Notes                    |
-|----------|-------------|-----------|-----------|--------------------------|
-| JC1      | UART0_CTS   | GPIO16    | GPIO16    |                          |
-| JC2      | UART0_TXD   | GPIO14    | GPIO14    |                          |
-| JC3      | UART0_RXD   | GPIO15    | GPIO15    |                          |
-| JC4      | UART0_RTS   | GPIO17    | GPIO17    |                          |
-| JC5      | GND         | --        | --        | Ground                   |
-| JC6      | VCC         | --        | --        | 3.3V (DO NOT jumper VCC) |
-| JC7      | GPCLK0      | GPIO4     | GPIO4     |                          |
-| JC8      | PWM0        | GPIO12    | GPIO12    |                          |
-| JC9      | GPCLK1      | GPIO5     | GPIO5     |                          |
-| JC10     | GPCLK2      | GPIO6     | GPIO6     |                          |
-| JC11     | GND         | --        | --        | Ground                   |
-| JC12     | VCC         | --        | --        | 3.3V (DO NOT jumper VCC) |
+| Pmod Pin | Signal      | RPi5 GPIO | RPi4 GPIO | Glasgow | Notes                    |
+|----------|-------------|-----------|-----------|---------|--------------------------|
+| JC1      | UART0_CTS   | GPIO16    | GPIO16    | A0      |                          |
+| JC2      | UART0_TXD   | GPIO14    | GPIO14    | B0      |                          |
+| JC3      | UART0_RXD   | GPIO15    | GPIO15    | B1      |                          |
+| JC4      | UART0_RTS   | GPIO17    | GPIO17    | --      |                          |
+| JC5      | GND         | --        | --        | --      | Ground                   |
+| JC6      | VCC         | --        | --        | --      | 3.3V (DO NOT jumper VCC) |
+| JC7      | GPCLK0      | GPIO4     | GPIO4     | --      |                          |
+| JC8      | PWM0        | GPIO12    | GPIO12    | --      |                          |
+| JC9      | GPCLK1      | GPIO5     | GPIO5     | A7      |                          |
+| JC10     | GPCLK2      | GPIO6     | GPIO6     | A6      |                          |
+| JC11     | GND         | --        | --        | --      | Ground                   |
+| JC12     | VCC         | --        | --        | --      | 3.3V (DO NOT jumper VCC) |
 
 ### Unique GPIO connections (excluding shared SPI bus pins)
 
 After de-duplicating the shared SPI0 lines (GPIO9, GPIO10, GPIO11), the complete
 set of unique GPIO-to-GPIO connections between the two RPi devices is:
 
-| BCM GPIO | Pmod Pin(s)   | Function                |
-|----------|---------------|-------------------------|
-| GPIO2    | JB10          | I2C1_SDA                |
-| GPIO3    | JB9           | I2C1_SCL                |
-| GPIO4    | JC7           | GPCLK0                  |
-| GPIO5    | JC9           | GPCLK1                  |
-| GPIO6    | JC10          | GPCLK2                  |
-| GPIO7    | JB1           | SPI0_CE1                |
-| GPIO8    | JA1           | SPI0_CE0                |
-| GPIO9    | JA3, JB3      | SPI0_MISO               |
-| GPIO10   | JA2, JB2      | SPI0_MOSI               |
-| GPIO11   | JA4, JB4      | SPI0_SCLK               |
-| GPIO12   | JC8           | PWM0                    |
-| GPIO13   | JB8           | PWM1                    |
-| GPIO14   | JC2           | UART0_TXD               |
-| GPIO15   | JC3           | UART0_RXD               |
-| GPIO16   | JC1           | UART0_CTS / SPI1_CE2    |
-| GPIO17   | JC4           | UART0_RTS / SPI1_CE1    |
-| GPIO18   | JA10          | PCM_CLK / PWM0 / SPI1_CE0 |
-| GPIO19   | JA7           | PCM_FS / PWM1 / SPI1_MISO |
-| GPIO20   | JA9           | PCM_DIN / SPI1_MOSI     |
-| GPIO21   | JA8           | PCM_DOUT / SPI1_SCLK    |
-| GPIO26   | JB7           | GPIO                    |
+| BCM GPIO | Pmod Pin(s)   | Function                | Glasgow |
+|----------|---------------|-------------------------|---------|
+| GPIO2    | JB10          | I2C1_SDA                | B7      |
+| GPIO3    | JB9           | I2C1_SCL                | B6      |
+| GPIO4    | JC7           | GPCLK0                  | --      |
+| GPIO5    | JC9           | GPCLK1                  | A7      |
+| GPIO6    | JC10          | GPCLK2                  | A6      |
+| GPIO7    | JB1           | SPI0_CE1                | B5      |
+| GPIO8    | JA1           | SPI0_CE0                | B4      |
+| GPIO9    | JA3, JB3      | SPI0_MISO               | --      |
+| GPIO10   | JA2, JB2      | SPI0_MOSI               | --      |
+| GPIO11   | JA4, JB4      | SPI0_SCLK               | --      |
+| GPIO12   | JC8           | PWM0                    | --      |
+| GPIO13   | JB8           | PWM1                    | A5      |
+| GPIO14   | JC2           | UART0_TXD               | B0      |
+| GPIO15   | JC3           | UART0_RXD               | B1      |
+| GPIO16   | JC1           | UART0_CTS / SPI1_CE2    | A0      |
+| GPIO17   | JC4           | UART0_RTS / SPI1_CE1    | --      |
+| GPIO18   | JA10          | PCM_CLK / PWM0 / SPI1_CE0 | B2   |
+| GPIO19   | JA7           | PCM_FS / PWM1 / SPI1_MISO | A4   |
+| GPIO20   | JA9           | PCM_DIN / SPI1_MOSI     | A1      |
+| GPIO21   | JA8           | PCM_DOUT / SPI1_SCLK    | A2      |
+| GPIO26   | JB7           | GPIO                    | A3      |
 
 That is **21 unique GPIO connections** between the two RPi devices (or 24 Pmod
 signal pins total, with 3 duplicated via the shared SPI0 bus).
+
+Of these 21 inter-RPi GPIO connections, **15 are also tapped by the Glasgow**.
+The 6 GPIOs that are connected between RPis but **not** tapped by Glasgow are:
+GPIO4, GPIO9, GPIO10, GPIO11, GPIO12, GPIO17.
+
+The Glasgow also taps **GPIO25** which is **not** part of the inter-RPi connection
+(it is not routed through any Pmod connector).
+
+---
+
+# Using Glasgow as a Signal Analyser
+
+The Glasgow can passively observe signals between the rpi5-pmod and rpi4-pmod
+using its `analyzer` applet. Since 15 of the 16 Glasgow pins are tapped into
+the inter-RPi signal lines, the Glasgow can capture traffic on most of the
+buses simultaneously. This is particularly useful for verifying PIO-generated
+waveforms and measuring timing accuracy.
+
+## Capturable Buses
+
+### UART (JC top row) -- Glasgow A0, B0, B1
+
+| Signal    | GPIO   | Glasgow | Direction (RPi5 perspective) |
+|-----------|--------|---------|------------------------------|
+| UART0_CTS | GPIO16 | A0      | Input (from RPi4)            |
+| UART0_TXD | GPIO14 | B0      | Output (to RPi4)             |
+| UART0_RXD | GPIO15 | B1      | Input (from RPi4)            |
+
+UART0_RTS (GPIO17) is **not** tapped -- but RTS/CTS are optional flow control.
+
+### I2C (JB bottom row) -- Glasgow B6, B7
+
+| Signal    | GPIO   | Glasgow | Note                         |
+|-----------|--------|---------|------------------------------|
+| I2C1_SCL  | GPIO3  | B6      | 1.8kΩ pull-up to 3.3V       |
+| I2C1_SDA  | GPIO2  | B7      | 1.8kΩ pull-up to 3.3V       |
+
+### SPI0 chip selects -- Glasgow B4, B5
+
+| Signal    | GPIO   | Glasgow | Note                         |
+|-----------|--------|---------|------------------------------|
+| SPI0_CE0  | GPIO8  | B4      | JA chip select               |
+| SPI0_CE1  | GPIO7  | B5      | JB chip select               |
+
+SPI0 MOSI/MISO/SCLK (GPIO9, GPIO10, GPIO11) are **not** tapped by Glasgow.
+
+### PCM / SPI1 (JA bottom row) -- Glasgow A1, A2, A4, B2
+
+| Signal         | GPIO   | Glasgow |
+|----------------|--------|---------|
+| PCM_CLK/SPI1_CE0  | GPIO18 | B2  |
+| PCM_FS/SPI1_MISO  | GPIO19 | A4  |
+| PCM_DIN/SPI1_MOSI | GPIO20 | A1  |
+| PCM_DOUT/SPI1_SCLK| GPIO21 | A2  |
+
+All 4 PCM/SPI1 signals are tapped -- this bus is fully observable.
+
+### GPCLK / PWM / GPIO -- Glasgow A3, A5, A6, A7
+
+| Signal   | GPIO   | Glasgow |
+|----------|--------|---------|
+| GPCLK1   | GPIO5  | A7      |
+| GPCLK2   | GPIO6  | A6      |
+| PWM1     | GPIO13 | A5      |
+| GPIO     | GPIO26 | A3      |
+
+## Glasgow Analyzer Usage
+
+```bash
+# Capture all 16 Glasgow pins as a logic trace (VCD format)
+glasgow run analyzer -V 3.3 \
+    --pins 'A0,A1,A2,A3,A4,A5,A6,A7,B0,B1,B2,B3,B4,B5,B6,B7' \
+    --pin-set-data 'A0,A1,A2,A3,A4,A5,A6,A7,B0,B1,B2,B3,B4,B5,B6,B7' \
+    -f <sample_rate> \
+    -o trace.vcd
+
+# View in GTKWave or PulseView
+gtkwave trace.vcd
+pulseview -I vcd -i trace.vcd
+```
+
+## Unmonitored Signals
+
+The following inter-RPi signals are **not** observable by the Glasgow:
+
+| Signal    | GPIO   | Pmod Pin | Reason              |
+|-----------|--------|----------|----------------------|
+| GPCLK0    | GPIO4  | JC7      | No Glasgow wire      |
+| SPI0_MISO | GPIO9  | JA3/JB3  | No Glasgow wire      |
+| SPI0_MOSI | GPIO10 | JA2/JB2  | No Glasgow wire      |
+| SPI0_SCLK | GPIO11 | JA4/JB4  | No Glasgow wire      |
+| PWM0      | GPIO12 | JC8      | No Glasgow wire      |
+| UART0_RTS | GPIO17 | JC4      | No Glasgow wire      |
+
+---
+
+# Other Available Hardware (JTAG Testing)
+
+The following NeTV2-based devices are used for testing JTAG specifically, not
+for general PIO benchmarking. They are documented here for completeness.
+
+## rpi5-netv2.iot.welland.mithis.com
+
+Raspberry Pi 5 Model B Rev 1.0 with a NeTV2 FPGA board connected via JTAG.
+
+Login: `ssh tim@rpi5-netv2.iot.welland.mithis.com` (or `tim@10.1.10.14`)
+
+| Property         | Value                                               |
+|------------------|-----------------------------------------------------|
+| SoC              | BCM2712 (4x Cortex-A76 @ 2.4 GHz)                  |
+| RAM              | 4 GB LPDDR4X                                        |
+| OS               | Debian GNU/Linux 13 (trixie)                        |
+| Kernel           | 6.12.47+rpt-rpi-2712 (aarch64)                     |
+| GPIO controller  | RP1 southbridge (via PCIe 2.0 x4)                   |
+| PIO              | 1 instance (`/dev/pio0`), 4 state machines, 200 MHz |
+| Serial           | `/dev/ttyAMA10`                                     |
+| SPI              | `/dev/spidev10.0`                                   |
+| I2C              | `/dev/i2c-13`, `/dev/i2c-14`                        |
+| OpenOCD          | 0.12.0+dev-snapshot (2025-07-16)                    |
+| openFPGALoader   | `/home/tim/openFPGALoader-src/build/openFPGALoader` |
+| FPGA             | Xilinx Artix-7 XC7A100T (IDCODE `0x13631093`)      |
+| Bitstream        | `~/rp1-jtag/tmp/user-100.bit` (3.8 MB)             |
+| librp1jtag       | `/usr/local/lib/librp1jtag.so.0`                    |
+
+### JTAG Pin Mapping
+
+| JTAG Signal | BCM GPIO | RPi 40-pin Header |
+|-------------|----------|--------------------|
+| TCK         | GPIO4    | Pin 7              |
+| TMS         | GPIO17   | Pin 11             |
+| TDI         | GPIO27   | Pin 13             |
+| TDO         | GPIO22   | Pin 15             |
+
+### JTAG Tool Usage
+
+#### openFPGALoader (rp1-jtag PIO driver)
+
+```bash
+# Install/update library before testing
+sudo cp ~/rp1-jtag/build/lib/librp1jtag.so.0 /usr/local/lib/ && sudo ldconfig
+
+# Reset PIO module (always do this before testing)
+sudo rmmod rp1_pio && sudo modprobe rp1_pio
+
+# Program bitstream (--pins format: TDI:TDO:TCK:TMS)
+sudo /home/tim/openFPGALoader-src/build/openFPGALoader \
+    -c rp1pio --pins 27:22:4:17 --freq 10000000 \
+    --write-sram ~/rp1-jtag/tmp/user-100.bit
+```
+
+#### OpenOCD (sysfsgpio)
+
+```bash
+sudo openocd \
+    -f interface/sysfsgpio-raspberrypi.cfg \
+    -c "sysfsgpio_tck_num 4; sysfsgpio_tms_num 17; sysfsgpio_tdi_num 27; sysfsgpio_tdo_num 22" \
+    -c "source [find cpld/xilinx-xc7.cfg]" \
+    -c "init" -c "scan_chain" -c "exit"
+```
+
+### Hardware Test Commands
+
+```bash
+# Hardware tests (need sudo for /dev/pio0)
+sudo ~/rp1-jtag/build/tests/hardware/test_pio_loopback     # No wiring needed
+sudo ~/rp1-jtag/build/tests/hardware/test_gpio_loopback     # 1 jumper: TDI->TDO
+sudo ~/rp1-jtag/build/tests/hardware/test_target_loopback   # 4 jumpers
+sudo ~/rp1-jtag/build/tests/hardware/test_idcode            # Needs NeTV2
+sudo ~/rp1-jtag/build/tests/hardware/test_bypass_loopback   # Needs NeTV2 (gold standard)
+```
+
+## rpi3-netv2.iot.welland.mithis.com
+
+Raspberry Pi 3 Model B Plus Rev 1.3 running the stock NeTV2 firmware image.
+
+Login: `ssh pi@ipv4.eth0.rpi3-netv2.iot.welland.mithis.com`
+
+You need to ssh into the device as the user `pi` and you have root access via
+`sudo`.
+
+| Property         | Value                                               |
+|------------------|-----------------------------------------------------|
+| SoC              | BCM2837B0 (4x Cortex-A53 @ 1.4 GHz)                |
+| RAM              | 927 MB LPDDR2                                       |
+| OS               | Raspbian GNU/Linux 9 (stretch)                      |
+| Kernel           | 4.14.71-v7+ (armv7l)                                |
+| GPIO controller  | BCM2837 (direct memory-mapped, base `0x3F000000`)   |
+| PIO              | None (BCM2837 has no PIO block)                     |
+| Serial           | `/dev/ttyAMA0`                                      |
+| SPI              | None enabled                                        |
+| I2C              | None enabled                                        |
+| OpenOCD          | 0.10.0 (2018-10-26, Alphamax fork)                  |
+| FPGA             | Xilinx Artix-7 XC7A35T (per config; check IDCODE)   |
+| Bitstream        | `/home/pi/code/netv2-fpga/production-images/user-35.bit` |
+| OpenOCD configs  | `/home/pi/code/netv2mvp-scripts/`                   |
+
+### JTAG Pin Mapping
+
+Same pin assignment as rpi5-netv2 (both connected to NeTV2 board):
+
+| JTAG Signal | BCM GPIO | RPi 40-pin Header |
+|-------------|----------|--------------------|
+| TCK         | GPIO4    | Pin 7              |
+| TMS         | GPIO17   | Pin 11             |
+| TDI         | GPIO27   | Pin 13             |
+| TDO         | GPIO22   | Pin 15             |
+
+### JTAG Tool Usage
+
+#### OpenOCD (bcm2835gpio, 10 MHz)
+
+```bash
+# Read IDCODE
+sudo openocd -f /home/pi/code/netv2mvp-scripts/idcode.cfg
+
+# Program bitstream
+sudo openocd \
+    -f /home/pi/code/netv2mvp-scripts/alphamax-rpi.cfg \
+    -c "source [find cpld/xilinx-xc7.cfg]" \
+    -c "init" \
+    -c "pld load 0 /home/pi/code/netv2-fpga/production-images/user-35.bit" \
+    -c "exit"
+```
+
+#### OpenOCD Config Details
+
+The `alphamax-rpi.cfg` config uses:
+- `interface bcm2835gpio` -- direct memory-mapped GPIO (not sysfs)
+- `bcm2835gpio_peripheral_base 0x3F000000` -- RPi 2/3 peripheral base
+- `bcm2835gpio_speed_coeffs 100000 5` -- tuned for 10 MHz (oscilloscope-verified)
+- `bcm2835gpio_jtag_nums 4 17 27 22` -- TCK TMS TDI TDO
+- `bcm2835gpio_srst_num 24` -- reset pin
+- `adapter_khz 10000` -- 10 MHz target clock speed
+
+Note: The Alphamax fork of OpenOCD has a GPIO drive strength patch
+(`pads_base[...] = 0x5a000008 + 4` for 10 mA drive) to avoid signal
+integrity issues at higher clock speeds.
+
+## NeTV2 FPGA Board
+
+Both rpi5-netv2 and rpi3-netv2 are connected to a NeTV2 FPGA board via JTAG.
+The NeTV2 is a Crowd Supply-funded video overlay board designed by bunnie
+(Andrew Huang) at Alphamax.
+
+### FPGA Variants
+
+| Board     | FPGA Variant  | IDCODE         | Bitstream Size |
+|-----------|---------------|----------------|----------------|
+| rpi5-netv2| XC7A100T      | `0x13631093`   | ~3.8 MB        |
+| rpi3-netv2| XC7A35T       | `0x0362d093`   | ~1.0 MB        |
+
+The Artix-7 JTAG interface supports up to 66 MHz TCK. At the current
+wiring lengths, reliable operation has been verified up to ~33 MHz
+requested (which is ~66 MHz actual due to the 2x RP1 PIO clock factor).
+
+### IDCODE Reference
+
+| Part          | IDCODE         |
+|---------------|----------------|
+| XC7A35T       | `0x0362d093`   |
+| XC7A100T      | `0x13631093`   |
+
+## Performance Baselines
+
+Measured bitstream programming times for the XC7A100T (3.8 MB) on rpi5-netv2:
+
+| Method                              | Time   | Throughput | Notes                    |
+|-------------------------------------|--------|------------|--------------------------|
+| rp1-jtag TX-only streaming DMA      | 6.13s  | ~620 kB/s  | 16B DMA chunks, DONE=1   |
+| rp1-jtag FIFO write (put_blocking)  | 9.4s   | ~404 kB/s  | ~957K ioctls, DONE=1     |
+| rp1-jtag sequential DMA             | 14.4s  | ~264 kB/s  | 224-bit chunks, DONE=1   |
+| OpenOCD sysfsgpio (RPi 5)           | 39s    | ~96 kB/s   | Kernel sysfs overhead    |
+
+All PIO-based methods are ioctl-limited (~25 us per ioctl), not TCK-limited.
+
+---
+
+# Power Cycling
+
+## Pmod Devices (PoE)
+
+The rpi5-pmod and rpi4-pmod are powered via Power over Ethernet (PoE) from a
+Netgear GSM7252PS switch.
+
+| Device    | Switch                     | Port  | Management IP |
+|-----------|----------------------------|-------|---------------|
+| rpi5-pmod | sw-netgear-gsm7252ps-s1    | 1/0/1 | 10.1.5.23     |
+| rpi4-pmod | sw-netgear-gsm7252ps-s1    | 1/0/2 | 10.1.5.23     |
+
+The switch is a Netgear GSM7252PS 48-Port GE L2+ Managed Stackable PoE Switch
+with 2 10GE SFP+ ports. Management IP: `10.1.5.23`.
+
+### SNMP PoE Control
+
+PoE is controlled via SNMP using the POWER-ETHERNET-MIB (RFC 3621). The
+`pethPsePortAdminEnable` object is at column 3 of the `pethPsePortTable`
+(columns 1-2 are not-accessible index columns).
+
+```
+OID: 1.3.6.1.2.1.105.1.1.1.3.<groupIndex>.<portIndex>
+     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     pethPsePortAdminEnable
+
+Values: 1 = true (PoE enabled), 2 = false (PoE disabled)
+
+Community strings:
+  Read:  public
+  Write: private
+```
+
+```bash
+# Install SNMP tools (already installed on rpi5-pmod)
+sudo apt install snmp
+
+# Query PoE status for port 1/0/1 (rpi5-pmod)
+snmpget -v2c -c public 10.1.5.23 1.3.6.1.2.1.105.1.1.1.3.1.1
+
+# Query PoE status for port 1/0/2 (rpi4-pmod)
+snmpget -v2c -c public 10.1.5.23 1.3.6.1.2.1.105.1.1.1.3.1.2
+
+# Disable PoE on port 1/0/1 (power off rpi5-pmod)
+snmpset -v2c -c private 10.1.5.23 1.3.6.1.2.1.105.1.1.1.3.1.1 i 2
+
+# Enable PoE on port 1/0/1 (power on rpi5-pmod)
+snmpset -v2c -c private 10.1.5.23 1.3.6.1.2.1.105.1.1.1.3.1.1 i 1
+
+# Disable PoE on port 1/0/2 (power off rpi4-pmod)
+snmpset -v2c -c private 10.1.5.23 1.3.6.1.2.1.105.1.1.1.3.1.2 i 2
+
+# Enable PoE on port 1/0/2 (power on rpi4-pmod)
+snmpset -v2c -c private 10.1.5.23 1.3.6.1.2.1.105.1.1.1.3.1.2 i 1
+```
+
+After disabling PoE, the device powers off immediately. After re-enabling,
+allow ~30 seconds for the device to boot.
+
+## NeTV2 Devices (Tasmota Smart Plugs)
+
+The rpi5-netv2 and rpi3-netv2 are powered via Tasmota-based smart plugs
+(Athom Plug V3, ESP32-C3). Each plug is controllable via HTTP.
+
+| Device     | Plug       | Plug Hostname                            |
+|------------|------------|------------------------------------------|
+| rpi5-netv2 | au-plug-22 | au-plug-22.iot.welland.mithis.com        |
+| rpi3-netv2 | au-plug-18 | au-plug-18.iot.welland.mithis.com        |
+
+### Tasmota HTTP API
+
+```bash
+# Check power status
+curl "http://au-plug-22.iot.welland.mithis.com/cm?cmnd=Power"
+# Returns: {"POWER":"ON"} or {"POWER":"OFF"}
+
+# Power off
+curl "http://au-plug-22.iot.welland.mithis.com/cm?cmnd=Power%20Off"
+
+# Power on
+curl "http://au-plug-22.iot.welland.mithis.com/cm?cmnd=Power%20On"
+
+# Toggle power
+curl "http://au-plug-22.iot.welland.mithis.com/cm?cmnd=Power%20Toggle"
+```
+
+### Power Cycle Script
+
+A power cycle script is available at
+`~/github/mithro/fpgas-online-test-designs/tmp/power_cycle.py`:
+
+```bash
+# Power cycle rpi5-netv2 (off for 5 seconds, then on)
+python3 ~/github/mithro/fpgas-online-test-designs/tmp/power_cycle.py au-plug-22
+
+# Power cycle rpi3-netv2
+python3 ~/github/mithro/fpgas-online-test-designs/tmp/power_cycle.py au-plug-18
+```
+
+After power cycling, wait approximately 30 seconds for the device to boot.
 
 ---
 
@@ -440,3 +960,19 @@ uv run verify_pmod_connections.py
 ```
 
 See `verify_pmod_connections.py` for details.
+
+Run `discover_glasgow_pins.py` on the rpi5-pmod (as root) to re-discover the
+Glasgow-to-RPi GPIO pin mapping:
+
+```bash
+# On rpi5-pmod:
+sudo python3 ~/discover_glasgow_pins.py
+```
+
+Run `discover_gpio_pairs.py` on the rpi5-pmod (as root) to re-discover the
+loopback pairs among unused GPIO pins:
+
+```bash
+# On rpi5-pmod:
+sudo python3 ~/discover_gpio_pairs.py
+```
