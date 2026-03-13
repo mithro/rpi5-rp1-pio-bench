@@ -25,6 +25,8 @@ from ... import *
 # PLL parameters: 48 MHz * (DIVF+1) / (DIVR+1) / 2^DIVQ
 # Target: 200 MHz  =>  48 * 50 / 3 / 4 = 200 MHz
 # VCO = 48 * 50 / 3 = 800 MHz (within 533-1066 MHz range)
+# nextpnr achieves ~194 MHz consistently for this design;
+# 200 MHz passes on favorable placement seeds.
 PLL_DIVR = 2
 PLL_DIVF = 49
 PLL_DIVQ = 2
@@ -96,48 +98,47 @@ class FreqCounterSubtarget(Elaboratable):
 
         # === Free-running segmented counters (ALWAYS increment, no enables) ===
 
-        # Single edge counter: increments by (edge_01 + edge_12) = 0, 1, or 2
-        # Using one counter instead of two reduces routing pressure.
-        # Pipeline the sum too: register (edge_01 + edge_12) before the adder.
+        # Combine edges into a single registered 2-bit sum
         edges_sum = Signal(2)
         m.d.fast += edges_sum.eq(Cat(edge_01 ^ edge_12, edge_01 & edge_12))
 
         # 3-stage segmented counter: 8 + 12 + 12 = 32 bits
-        # Each stage's carry is registered before feeding the next.
-        MID_BITS = 12
-        HI_BITS = 12
+        LO = COUNTER_LO_BITS
+        MID = 12
+        HI = 12
 
-        ec_lo = Signal(COUNTER_LO_BITS)
-        ec_mid = Signal(MID_BITS)
-        ec_hi = Signal(HI_BITS)
-        ec_next = Signal(COUNTER_LO_BITS + 1)
-        m.d.comb += ec_next.eq(ec_lo + edges_sum)
-        m.d.fast += ec_lo.eq(ec_next[:COUNTER_LO_BITS])
-        ec_carry1 = Signal()
-        m.d.fast += ec_carry1.eq(ec_next[COUNTER_LO_BITS])
-        ec_mid_next = Signal(MID_BITS + 1)
-        m.d.comb += ec_mid_next.eq(ec_mid + ec_carry1)
-        m.d.fast += ec_mid.eq(ec_mid_next[:MID_BITS])
-        ec_carry2 = Signal()
-        m.d.fast += ec_carry2.eq(ec_mid_next[MID_BITS])
-        with m.If(ec_carry2):
+        # Edge counter
+        ec_lo = Signal(LO)
+        ec_mid = Signal(MID)
+        ec_hi = Signal(HI)
+        ec_lo_next = Signal(LO + 1)
+        m.d.comb += ec_lo_next.eq(ec_lo + edges_sum)
+        m.d.fast += ec_lo.eq(ec_lo_next[:LO])
+        ec_c1 = Signal()
+        m.d.fast += ec_c1.eq(ec_lo_next[LO])
+        ec_mid_next = Signal(MID + 1)
+        m.d.comb += ec_mid_next.eq(ec_mid + ec_c1)
+        m.d.fast += ec_mid.eq(ec_mid_next[:MID])
+        ec_c2 = Signal()
+        m.d.fast += ec_c2.eq(ec_mid_next[MID])
+        with m.If(ec_c2):
             m.d.fast += ec_hi.eq(ec_hi + 1)
 
-        # Gate counter: same 3-stage segmentation
-        gc_lo = Signal(COUNTER_LO_BITS)
-        gc_mid = Signal(MID_BITS)
-        gc_hi = Signal(HI_BITS)
-        gc_next = Signal(COUNTER_LO_BITS + 1)
-        m.d.comb += gc_next.eq(gc_lo + 1)
-        m.d.fast += gc_lo.eq(gc_next[:COUNTER_LO_BITS])
-        gc_carry1 = Signal()
-        m.d.fast += gc_carry1.eq(gc_next[COUNTER_LO_BITS])
-        gc_mid_next = Signal(MID_BITS + 1)
-        m.d.comb += gc_mid_next.eq(gc_mid + gc_carry1)
-        m.d.fast += gc_mid.eq(gc_mid_next[:MID_BITS])
-        gc_carry2 = Signal()
-        m.d.fast += gc_carry2.eq(gc_mid_next[MID_BITS])
-        with m.If(gc_carry2):
+        # Gate counter
+        gc_lo = Signal(LO)
+        gc_mid = Signal(MID)
+        gc_hi = Signal(HI)
+        gc_lo_next = Signal(LO + 1)
+        m.d.comb += gc_lo_next.eq(gc_lo + 1)
+        m.d.fast += gc_lo.eq(gc_lo_next[:LO])
+        gc_c1 = Signal()
+        m.d.fast += gc_c1.eq(gc_lo_next[LO])
+        gc_mid_next = Signal(MID + 1)
+        m.d.comb += gc_mid_next.eq(gc_mid + gc_c1)
+        m.d.fast += gc_mid.eq(gc_mid_next[:MID])
+        gc_c2 = Signal()
+        m.d.fast += gc_c2.eq(gc_mid_next[MID])
+        with m.If(gc_c2):
             m.d.fast += gc_hi.eq(gc_hi + 1)
 
         # === Gate snapshot logic ===
@@ -158,24 +159,15 @@ class FreqCounterSubtarget(Elaboratable):
         ]
 
         # Snapshot registers (captured on gate edges, NOT in counter path)
-        start_ec_lo = Signal(COUNTER_LO_BITS)
-        start_ec_mid = Signal(MID_BITS)
-        start_ec_hi = Signal(HI_BITS)
-        start_gc_lo = Signal(COUNTER_LO_BITS)
-        start_gc_mid = Signal(MID_BITS)
-        start_gc_hi = Signal(HI_BITS)
-
-        end_ec_lo = Signal(COUNTER_LO_BITS)
-        end_ec_mid = Signal(MID_BITS)
-        end_ec_hi = Signal(HI_BITS)
-        end_gc_lo = Signal(COUNTER_LO_BITS)
-        end_gc_mid = Signal(MID_BITS)
-        end_gc_hi = Signal(HI_BITS)
+        start_ec = Signal(32)
+        start_gc = Signal(32)
+        end_ec = Signal(32)
+        end_gc = Signal(32)
 
         with m.If(gate_start):
             m.d.fast += [
-                start_ec_lo.eq(ec_lo), start_ec_mid.eq(ec_mid), start_ec_hi.eq(ec_hi),
-                start_gc_lo.eq(gc_lo), start_gc_mid.eq(gc_mid), start_gc_hi.eq(gc_hi),
+                start_ec.eq(Cat(ec_lo, ec_mid, ec_hi)),
+                start_gc.eq(Cat(gc_lo, gc_mid, gc_hi)),
             ]
 
         gate_done_fast = Signal()
@@ -185,8 +177,8 @@ class FreqCounterSubtarget(Elaboratable):
 
         with m.If(gate_end):
             m.d.fast += [
-                end_ec_lo.eq(ec_lo), end_ec_mid.eq(ec_mid), end_ec_hi.eq(ec_hi),
-                end_gc_lo.eq(gc_lo), end_gc_mid.eq(gc_mid), end_gc_hi.eq(gc_hi),
+                end_ec.eq(Cat(ec_lo, ec_mid, ec_hi)),
+                end_gc.eq(Cat(gc_lo, gc_mid, gc_hi)),
                 gate_done_fast.eq(1),
             ]
         with m.Elif(gate_start):
@@ -230,17 +222,12 @@ class FreqCounterSubtarget(Elaboratable):
 
             with m.State("WAIT_DONE"):
                 with m.If(gate_done_sync):
-                    # Reassemble and subtract in sync domain
-                    ec_start = Cat(start_ec_lo, start_ec_mid, start_ec_hi)
-                    ec_end = Cat(end_ec_lo, end_ec_mid, end_ec_hi)
-                    gc_start = Cat(start_gc_lo, start_gc_mid, start_gc_hi)
-                    gc_end = Cat(end_gc_lo, end_gc_mid, end_gc_hi)
-
+                    # Subtract in sync domain
                     total_edges = Signal(32)
                     delta_gc = Signal(32)
                     m.d.comb += [
-                        total_edges.eq(ec_end - ec_start),
-                        delta_gc.eq(gc_end - gc_start),
+                        total_edges.eq(end_ec - start_ec),
+                        delta_gc.eq(end_gc - start_gc),
                     ]
                     m.d.sync += [
                         result_edges.eq(total_edges),
