@@ -45,14 +45,15 @@ Additional cross-validation: clkdiv=1 with delay=15 (expected 6.250 MHz) measure
 ## Instrument Capabilities
 
 ### Glasgow PLL+DDR Freq-Counter (primary instrument)
-- **Method:** Custom FPGA applet: iCE40 PLL at 264 MHz + DDR I/O (SB_IO DDR mode)
-- **Effective sample rate:** 528 MHz (samples on both PLL clock edges)
+- **Method:** Custom FPGA applet: iCE40 PLL at 288 MHz + DDR I/O (SB_IO DDR mode)
+- **Effective sample rate:** 576 MHz (samples on both PLL clock edges)
 - **Accurate range:** DC -- 100 MHz (all 9 clkdiv settings confirmed)
-- **Nyquist limit:** 264 MHz
+- **Nyquist limit:** 288 MHz
 - **Architecture:** Free-running counters with snapshot subtraction. Pipelined edge detection (XOR -> registered -> combined sum -> registered). 3-stage segmented counter (8+12+12 bits) with registered carries. Zero conditional logic in counter paths.
+- **Manual placement:** nextpnr --pre-pack script constrains all fast-domain cells to a rectangular region near the DDR I/O pin, minimizing routing delays.
 - **Measurement:** Single combined edge counter, gate counter tracks PLL cycles. Sync domain computes (end - start) for both.
-- **Repeatability:** 3 measurements per setting, variance < 4 edge counts in ~200M
-- **Overclocking:** nextpnr reports ~194 MHz max achievable, but the design works reliably at 264 MHz (iCE40 timing models are conservative). 288 MHz shows intermittent counter errors.
+- **Repeatability:** 3 measurements per setting, variance < 2 edge counts in ~200M
+- **Overclocking:** nextpnr reports ~194 MHz max achievable, but the design works reliably at 288 MHz with manual placement constraints (iCE40 timing models are conservative). 336 MHz shows counter corruption.
 
 ### RPi4 BCM2711 Edge Counter (GPIO4)
 - **Method:** mmap `/dev/gpiomem`, tight polling loop on GPLEV0 register
@@ -76,13 +77,14 @@ Additional cross-validation: clkdiv=1 with delay=15 (expected 6.250 MHz) measure
 
 **Glasgow PLL+DDR freq-counter (primary):**
 - Custom Glasgow applet: `toggle/glasgow_freq_counter/__init__.py`
-- iCE40 SB_PLL40_CORE: 48 MHz x 22 / 4 = 264 MHz (VCO = 1056 MHz)
+- iCE40 SB_PLL40_CORE: 48 MHz x 12 / 2 = 288 MHz (VCO = 576 MHz)
 - DDR via io.DDRBuffer with `i_domain="fast"`: SB_IO samples at both PLL clock edges
 - Pipelined edge detection: DDR -> prev register -> XOR -> registered edge flags -> registered sum
 - Free-running 3-stage segmented counter (8+12+12 bits) with registered carries between stages
 - Single combined edge counter (no conditional logic in datapath)
 - Gate control via snapshot subtraction: start/end values captured, difference computed in sync domain
-- Built with --timing-allow-fail (264 MHz exceeds nextpnr's ~194 MHz model but works empirically)
+- Manual placement via --pre-pack constrains fast-domain cells near I/O pin (requires native nextpnr-ice40, GLASGOW_TOOLCHAIN=system)
+- Built with --timing-allow-fail (288 MHz exceeds nextpnr's ~194 MHz model but works empirically with placement constraints)
 - Host sends 4-byte gate time (48 MHz ticks), FPGA returns 12-byte result
 - 3 measurements per clkdiv setting, 1-second gate time each
 
