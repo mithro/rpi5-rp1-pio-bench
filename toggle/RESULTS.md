@@ -8,7 +8,7 @@
 
 **The RP1 PIO clock is 200 MHz.** The claim that "PIO runs at 400 MHz" is false.
 
-All 9 clkdiv settings from 1 to 256 measured at **99.99% accuracy** using a custom Glasgow FPGA frequency counter with 132 MHz PLL + DDR I/O (264 MHz effective sample rate). If PIO ran at 400 MHz, all frequencies would be 2x higher than observed.
+All 9 clkdiv settings from 1 to 256 measured at **99.99% accuracy** using a custom Glasgow FPGA frequency counter with 288 MHz PLL + DDR I/O (576 MHz effective sample rate) and manual placement constraints. If PIO ran at 400 MHz, all frequencies would be 2x higher than observed.
 
 ## Results (delay=0)
 
@@ -106,9 +106,9 @@ Additional cross-validation: clkdiv=1 with delay=15 (expected 6.250 MHz) measure
 
 The RP1 PIO system clock is **200 MHz** as reported by `clock_get_hz(clk_sys)`.
 
-With the 132 MHz PLL + DDR freq-counter (264 MHz effective), we directly measured the maximum toggle frequency at clkdiv=1: **99.991 MHz** -- matching the 200 MHz / 2 instructions = 100 MHz prediction to 99.99% accuracy.
+With the 288 MHz PLL + DDR freq-counter (576 MHz effective, Nyquist 288 MHz), we directly measured the maximum toggle frequency at clkdiv=1: **99.991 MHz** -- matching the 200 MHz / 2 instructions = 100 MHz prediction to 99.99% accuracy. The signal is well within Nyquist -- no aliasing possible.
 
-If PIO ran at 400 MHz, clkdiv=1 would produce 200 MHz. At our 264 MHz sample rate, this would alias to |200 - 264| = 64 MHz -- not the 99.991 MHz we measured. The "400 MHz" claim likely conflates camera pixel throughput (200 MHz x 2 pixels/clock in CSI DPI mode) with actual PIO instruction execution rate.
+If PIO ran at 400 MHz, clkdiv=1 would produce 200 MHz, also within our 288 MHz Nyquist -- and we would measure 200 MHz, not 99.991 MHz. The "400 MHz" claim likely conflates camera pixel throughput (200 MHz x 2 pixels/clock in CSI DPI mode) with actual PIO instruction execution rate.
 
 ## Hardware Notes
 
