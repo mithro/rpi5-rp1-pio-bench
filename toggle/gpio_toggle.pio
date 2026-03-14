@@ -1,0 +1,23 @@
+; gpio_toggle.pio — Maximum-speed GPIO toggle for frequency measurement
+;
+; Toggles output pin (relative to set_base) between HIGH and LOW as fast
+; as the PIO clock allows. With clkdiv=1 and delay=0, this produces the
+; maximum possible toggle frequency: f_pio / 2.
+;
+; At 200 MHz PIO clock (5 ns per cycle):
+;   set pins, 1: 1 cycle (5 ns)
+;   set pins, 0: 1 cycle (5 ns)
+;   Full period: 2 cycles (10 ns)
+;   Toggle frequency: 100 MHz
+;
+; With clock divider D and instruction delay N:
+;   Each instruction: (1 + N) * D cycles
+;   Full period: 2 * (1 + N) * D cycles
+;   Toggle frequency: f_pio / (2 * (1 + N) * D)
+
+.program gpio_toggle
+
+.wrap_target
+    set pins, 1          ; drive output pin HIGH
+    set pins, 0          ; drive output pin LOW
+.wrap

@@ -1,0 +1,312 @@
+[
+  {
+    "clkdiv": 256,
+    "delay": 0,
+    "expected_freq_hz": 390625.0,
+    "measured_freq_hz": 390590.49186269817,
+    "avg_edges": 781181.0,
+    "accuracy_pct": 99.99116591685073,
+    "measurements": [
+      {
+        "edges": 781181,
+        "gate_cycles": 288000006,
+        "sample_freq_hz": 288000000,
+        "gate_seconds": 1.0000000208333333,
+        "freq_hz": 390590.4918626981
+      },
+      {
+        "edges": 781181,
+        "gate_cycles": 288000006,
+        "sample_freq_hz": 288000000,
+        "gate_seconds": 1.0000000208333333,
+        "freq_hz": 390590.4918626981
+      },
+      {
+        "edges": 781181,
+        "gate_cycles": 288000006,
+        "sample_freq_hz": 288000000,
+        "gate_seconds": 1.0000000208333333,
+        "freq_hz": 390590.4918626981
+      }
+    ]
+  },
+  {
+    "clkdiv": 128,
+    "delay": 0,
+    "expected_freq_hz": 781250.0,
+    "measured_freq_hz": 781181.1503920594,
+    "avg_edges": 1562362.3333333333,
+    "accuracy_pct": 99.9911872501836,
+    "measurements": [
+      {
+        "edges": 1562362,
+        "gate_cycles": 288000006,
+        "sample_freq_hz": 288000000,
+        "gate_seconds": 1.0000000208333333,
+        "freq_hz": 781180.9837253962
+      },
+      {
+        "edges": 1562363,
+        "gate_cycles": 288000006,
+        "sample_freq_hz": 288000000,
+        "gate_seconds": 1.0000000208333333,
+        "freq_hz": 781181.4837253857
+      },
+      {
+        "edges": 1562362,
+        "gate_cycles": 288000006,
+        "sample_freq_hz": 288000000,
+        "gate_seconds": 1.0000000208333333,
+        "freq_hz": 781180.9837253962
+      }
+    ]
+  },
+  {
+    "clkdiv": 64,
+    "delay": 0,
+    "expected_freq_hz": 1562500.0,
+    "measured_freq_hz": 1562362.1341174555,
+    "avg_edges": 3124724.3333333335,
+    "accuracy_pct": 99.99117658351715,
+    "measurements": [
+      {
+        "edges": 3124724,
+        "gate_cycles": 288000006,
+        "sample_freq_hz": 288000000,
+        "gate_seconds": 1.0000000208333333,
+        "freq_hz": 1562361.9674507924
+      },
+      {
+        "edges": 3124724,
+        "gate_cycles": 288000006,
+        "sample_freq_hz": 288000000,
+        "gate_seconds": 1.0000000208333333,
+        "freq_hz": 1562361.9674507924
+      },
+      {
+        "edges": 3124725,
+        "gate_cycles": 288000006,
+        "sample_freq_hz": 288000000,
+        "gate_seconds": 1.0000000208333333,
+        "freq_hz": 1562362.467450782
+      }
+    ]
+  },
+  {
+    "clkdiv": 32,
+    "delay": 0,
+    "expected_freq_hz": 3125000.0,
+    "measured_freq_hz": 3124723.9349015853,
+    "avg_edges": 6249448.0,
+    "accuracy_pct": 99.99116591685073,
+    "measurements": [
+      {
+        "edges": 6249448,
+        "gate_cycles": 288000006,
+        "sample_freq_hz": 288000000,
+        "gate_seconds": 1.0000000208333333,
+        "freq_hz": 3124723.934901585
+      },
+      {
+        "edges": 6249448,
+        "gate_cycles": 288000006,
+        "sample_freq_hz": 288000000,
+        "gate_seconds": 1.0000000208333333,
+        "freq_hz": 3124723.934901585
+      },
+      {
+        "edges": 6249448,
+        "gate_cycles": 288000006,
+        "sample_freq_hz": 288000000,
+        "gate_seconds": 1.0000000208333333,
+        "freq_hz": 3124723.934901585
+      }
+    ]
+  },
+  {
+    "clkdiv": 16,
+    "delay": 0,
+    "expected_freq_hz": 6250000.0,
+    "measured_freq_hz": 6249447.869803171,
+    "avg_edges": 12498896.0,
+    "accuracy_pct": 99.99116591685073,
+    "measurements": [
+      {
+        "edges": 12498896,
+        "gate_cycles": 288000006,
+        "sample_freq_hz": 288000000,
+        "gate_seconds": 1.0000000208333333,
+        "freq_hz": 6249447.86980317
+      },
+      {
+        "edges": 12498896,
+        "gate_cycles": 288000006,
+        "sample_freq_hz": 288000000,
+        "gate_seconds": 1.0000000208333333,
+        "freq_hz": 6249447.86980317
+      },
+      {
+        "edges": 12498896,
+        "gate_cycles": 288000006,
+        "sample_freq_hz": 288000000,
+        "gate_seconds": 1.0000000208333333,
+        "freq_hz": 6249447.86980317
+      }
+    ]
+  },
+  {
+    "clkdiv": 8,
+    "delay": 0,
+    "expected_freq_hz": 12500000.0,
+    "measured_freq_hz": 12498895.739606341,
+    "avg_edges": 24997792.0,
+    "accuracy_pct": 99.99116591685073,
+    "measurements": [
+      {
+        "edges": 24997792,
+        "gate_cycles": 288000006,
+        "sample_freq_hz": 288000000,
+        "gate_seconds": 1.0000000208333333,
+        "freq_hz": 12498895.73960634
+      },
+      {
+        "edges": 24997792,
+        "gate_cycles": 288000006,
+        "sample_freq_hz": 288000000,
+        "gate_seconds": 1.0000000208333333,
+        "freq_hz": 12498895.73960634
+      },
+      {
+        "edges": 24997792,
+        "gate_cycles": 288000006,
+        "sample_freq_hz": 288000000,
+        "gate_seconds": 1.0000000208333333,
+        "freq_hz": 12498895.73960634
+      }
+    ]
+  },
+  {
+    "clkdiv": 4,
+    "delay": 0,
+    "expected_freq_hz": 25000000.0,
+    "measured_freq_hz": 24997790.145879373,
+    "avg_edges": 49995581.333333336,
+    "accuracy_pct": 99.99116058351748,
+    "measurements": [
+      {
+        "edges": 49995581,
+        "gate_cycles": 288000006,
+        "sample_freq_hz": 288000000,
+        "gate_seconds": 1.0000000208333333,
+        "freq_hz": 24997789.97921271
+      },
+      {
+        "edges": 49995581,
+        "gate_cycles": 288000006,
+        "sample_freq_hz": 288000000,
+        "gate_seconds": 1.0000000208333333,
+        "freq_hz": 24997789.97921271
+      },
+      {
+        "edges": 49995582,
+        "gate_cycles": 288000006,
+        "sample_freq_hz": 288000000,
+        "gate_seconds": 1.0000000208333333,
+        "freq_hz": 24997790.4792127
+      }
+    ]
+  },
+  {
+    "clkdiv": 2,
+    "delay": 0,
+    "expected_freq_hz": 50000000.0,
+    "measured_freq_hz": 49995581.12509207,
+    "avg_edges": 99991164.33333333,
+    "accuracy_pct": 99.99116225018413,
+    "measurements": [
+      {
+        "edges": 99991165,
+        "gate_cycles": 288000006,
+        "sample_freq_hz": 288000000,
+        "gate_seconds": 1.0000000208333333,
+        "freq_hz": 49995581.45842539
+      },
+      {
+        "edges": 99991164,
+        "gate_cycles": 288000006,
+        "sample_freq_hz": 288000000,
+        "gate_seconds": 1.0000000208333333,
+        "freq_hz": 49995580.9584254
+      },
+      {
+        "edges": 99991164,
+        "gate_cycles": 288000006,
+        "sample_freq_hz": 288000000,
+        "gate_seconds": 1.0000000208333333,
+        "freq_hz": 49995580.9584254
+      }
+    ]
+  },
+  {
+    "clkdiv": 1,
+    "delay": 0,
+    "expected_freq_hz": 100000000.0,
+    "measured_freq_hz": 99991164.41685075,
+    "avg_edges": 199982333.0,
+    "accuracy_pct": 99.99116441685074,
+    "measurements": [
+      {
+        "edges": 199982333,
+        "gate_cycles": 288000006,
+        "sample_freq_hz": 288000000,
+        "gate_seconds": 1.0000000208333333,
+        "freq_hz": 99991164.41685075
+      },
+      {
+        "edges": 199982333,
+        "gate_cycles": 288000006,
+        "sample_freq_hz": 288000000,
+        "gate_seconds": 1.0000000208333333,
+        "freq_hz": 99991164.41685075
+      },
+      {
+        "edges": 199982333,
+        "gate_cycles": 288000006,
+        "sample_freq_hz": 288000000,
+        "gate_seconds": 1.0000000208333333,
+        "freq_hz": 99991164.41685075
+      }
+    ]
+  },
+  {
+    "clkdiv": 1,
+    "delay": 15,
+    "expected_freq_hz": 6250000.0,
+    "measured_freq_hz": 6249447.7031365065,
+    "avg_edges": 12498895.666666666,
+    "accuracy_pct": 99.9911632501841,
+    "measurements": [
+      {
+        "edges": 12498896,
+        "gate_cycles": 288000006,
+        "sample_freq_hz": 288000000,
+        "gate_seconds": 1.0000000208333333,
+        "freq_hz": 6249447.86980317
+      },
+      {
+        "edges": 12498896,
+        "gate_cycles": 288000006,
+        "sample_freq_hz": 288000000,
+        "gate_seconds": 1.0000000208333333,
+        "freq_hz": 6249447.86980317
+      },
+      {
+        "edges": 12498895,
+        "gate_cycles": 288000006,
+        "sample_freq_hz": 288000000,
+        "gate_seconds": 1.0000000208333333,
+        "freq_hz": 6249447.36980318
+      }
+    ]
+  }
+]

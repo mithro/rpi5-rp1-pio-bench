@@ -1,0 +1,127 @@
+{
+  "benchmark": "rp1-pio-toggle-freq",
+  "config": {
+    "pin": 4,
+    "sys_clk_hz": 200000000,
+    "duration_ms": 3000,
+    "rpi5_host": "rpi5-pmod.iot.welland.mithis.com",
+    "rpi4_host": "rpi4-pmod.iot.welland.mithis.com"
+  },
+  "measurements": [
+    {
+      "clkdiv": 256,
+      "delay": 0,
+      "expected_freq_hz": 390625.0,
+      "measured_freq_hz": 389986.0,
+      "accuracy_pct": 99.84,
+      "edges_counted": 2340104,
+      "samples_taken": 46202880,
+      "elapsed_ns": 3000241098,
+      "transition_ratio": 0.050648,
+      "nyquist_limited": false
+    },
+    {
+      "clkdiv": 128,
+      "delay": 0,
+      "expected_freq_hz": 781250.0,
+      "measured_freq_hz": 779512.3,
+      "accuracy_pct": 99.78,
+      "edges_counted": 4678480,
+      "samples_taken": 46399488,
+      "elapsed_ns": 3000902075,
+      "transition_ratio": 0.10083,
+      "nyquist_limited": false
+    },
+    {
+      "clkdiv": 64,
+      "delay": 0,
+      "expected_freq_hz": 1562500.0,
+      "measured_freq_hz": 1559332.3,
+      "accuracy_pct": 99.8,
+      "edges_counted": 9359229,
+      "samples_taken": 46137344,
+      "elapsed_ns": 3001037405,
+      "transition_ratio": 0.202856,
+      "nyquist_limited": false
+    },
+    {
+      "clkdiv": 32,
+      "delay": 0,
+      "expected_freq_hz": 3125000.0,
+      "measured_freq_hz": 3110837.3,
+      "accuracy_pct": 99.55,
+      "edges_counted": 18681757,
+      "samples_taken": 46071808,
+      "elapsed_ns": 3002689506,
+      "transition_ratio": 0.405492,
+      "nyquist_limited": false
+    },
+    {
+      "clkdiv": 16,
+      "delay": 0,
+      "expected_freq_hz": 6250000.0,
+      "measured_freq_hz": 6049988.4,
+      "accuracy_pct": 96.8,
+      "edges_counted": 36336013,
+      "samples_taken": 46006272,
+      "elapsed_ns": 3002982025,
+      "transition_ratio": 0.789806,
+      "nyquist_limited": true
+    },
+    {
+      "clkdiv": 8,
+      "delay": 0,
+      "expected_freq_hz": 12500000.0,
+      "measured_freq_hz": 2529437.4,
+      "accuracy_pct": 20.24,
+      "edges_counted": 15188401,
+      "samples_taken": 44498944,
+      "elapsed_ns": 3002327960,
+      "transition_ratio": 0.34132,
+      "nyquist_limited": false
+    },
+    {
+      "clkdiv": 4,
+      "delay": 0,
+      "expected_freq_hz": 25000000.0,
+      "measured_freq_hz": 3377953.4,
+      "accuracy_pct": 13.51,
+      "edges_counted": 20297904,
+      "samples_taken": 42991616,
+      "elapsed_ns": 3004467777,
+      "transition_ratio": 0.472136,
+      "nyquist_limited": true
+    },
+    {
+      "clkdiv": 2,
+      "delay": 0,
+      "expected_freq_hz": 50000000.0,
+      "measured_freq_hz": 2229563.0,
+      "accuracy_pct": 4.46,
+      "edges_counted": 13396403,
+      "samples_taken": 43712512,
+      "elapsed_ns": 3004266534,
+      "transition_ratio": 0.306466,
+      "nyquist_limited": false
+    },
+    {
+      "clkdiv": 1,
+      "delay": 0,
+      "expected_freq_hz": 100000000.0,
+      "measured_freq_hz": 0.0,
+      "accuracy_pct": 0.0,
+      "edges_counted": 0,
+      "samples_taken": 46792704,
+      "elapsed_ns": 3000749029,
+      "transition_ratio": 0.0,
+      "nyquist_limited": false
+    }
+  ],
+  "conclusion": {
+    "pio_clock_hz": 200000000,
+    "confidence": "high",
+    "avg_accuracy_pct": 99.74,
+    "n_accurate_measurements": 4,
+    "summary": "PIO clock confirmed at 200 MHz. 4 measurements match 200 MHz model with 99.7% average accuracy. The '400 MHz' claim is FALSE."
+  }
+}
