@@ -1,0 +1,31 @@
+; test_1bit_dma.pio — bit-serial GPIO loopback with 1-bit autopull/autopush
+; Each out x,1 consumes a full DMA word (only MSB used).
+; Each in pins,1 produces a full DMA word (bit in LSB).
+; Word rate = 200 MHz / 8 cycles = 25 MW/s — at the DMA threshold.
+;
+; Timing: set pins at [2], GPIO synchroniser needs 4 cycles on RP1,
+; so in pins at [6] correctly samples the current bit.
+;
+; Software sends +1 dummy TX word and skips the first RX word to
+; compensate for the garbage bit from uninitialized OSR at startup.
+
+.program test_1bit_dma
+
+.wrap_target
+top:
+    out x, 1          ; [0] shift 1 bit from OSR → X (autopull every bit!)
+    jmp !x low        ; [1] branch on bit value
+    set pins, 1       ; [2] drive HIGH
+    nop               ; [3] synchroniser delay
+    nop               ; [4] synchroniser delay
+    nop               ; [5] synchroniser delay (RP1 needs 4 cycles)
+    in pins, 1        ; [6] sample pin → ISR (autopush every bit!)
+    jmp top           ; [7] next bit
+low:
+    set pins, 0       ; [2] drive LOW
+    nop               ; [3] synchroniser delay
+    nop               ; [4] synchroniser delay
+    nop               ; [5] synchroniser delay (RP1 needs 4 cycles)
+    in pins, 1        ; [6] sample pin → ISR
+    nop               ; [7] pad to match HIGH path
+.wrap

@@ -344,7 +344,7 @@ See [`hw.md`](hw.md) for the full pin mapping.
 | [`rp1-dma-2.md`](rp1-dma-2.md) | RP1 PIO register map, DMA data path internals, performance measurements, and worked code examples |
 | [`resources.md`](resources.md) | Curated collection of datasheets, source repos, PRs, and community projects |
 | [`benchmark/`](benchmark/) | PIO internal loopback throughput benchmark (DMA round-trip, ~42 MB/s) |
-| [`gpio-loopback/`](gpio-loopback/) | GPIO loopback throughput benchmark (bit-serial over GPIO, ~5 MB/s theoretical) |
+| [`gpio-loopback/`](gpio-loopback/) | GPIO loopback throughput benchmark (1-bit serial over GPIO, ~1.5 MB/s measured) |
 | [`latency/`](latency/) | PIO latency benchmark (L0–L3 layers, RPi4 stimulus + RPi5 echo) |
 | [`verify_pmod_connections.py`](verify_pmod_connections.py) | Tests GPIO jumper connections between RPi5 and RPi4 via Pmod HAT |
 

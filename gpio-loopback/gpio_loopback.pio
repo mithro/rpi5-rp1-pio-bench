@@ -1,0 +1,47 @@
+; gpio_loopback.pio — Bit-serial GPIO loopback with 1-bit autopull/autopush
+;
+; Single SM drives a GPIO pin and reads it back in the same cycle window.
+; Uses set pins (not out pins — RP1 'out pins' does NOT drive physical
+; GPIO pads). Each `out x,1` consumes a full DMA word (only MSB used,
+; 1-bit autopull threshold). Each `in pins,1` produces a full DMA word
+; (bit in LSB, 1-bit autopush threshold).
+;
+; 8 PIO cycles per bit at 200 MHz = 25 MW/s DMA word rate.
+;   [0] out x,1     — load bit from OSR (autopull refills from TX FIFO)
+;   [1] jmp !x low  — branch on bit value
+;   [2] set pins    — drive GPIO HIGH or LOW
+;   [3] nop         — synchroniser delay
+;   [4] nop         — synchroniser delay
+;   [5] nop         — synchroniser delay (RP1 needs 4 cycles: [2]→[6])
+;   [6] in pins,1   — sample GPIO → ISR (autopush writes to RX FIFO)
+;   [7] jmp/nop     — next bit
+;
+; Effective source throughput: 200 MHz / (8 cyc × 32 bits) = 3.125 MB/s
+;
+; Software sends src_words*32 + 1 TX words and skips the first RX word
+; to compensate for garbage bit from uninitialized OSR at startup.
+;
+; Requires: set_base = output GPIO, set_count = 1
+;           in_base  = input GPIO (same pin for single-pin loopback,
+;                      or looped-back pin for two-pin loopback)
+
+.program gpio_loopback
+
+.wrap_target
+top:
+    out x, 1          ; [0] shift 1 bit from OSR → X (autopull every bit!)
+    jmp !x low        ; [1] branch on bit value
+    set pins, 1       ; [2] drive HIGH
+    nop               ; [3] synchroniser delay
+    nop               ; [4] synchroniser delay
+    nop               ; [5] synchroniser delay (RP1 needs 4 cycles)
+    in pins, 1        ; [6] sample pin → ISR (autopush every bit!)
+    jmp top           ; [7] next bit
+low:
+    set pins, 0       ; [2] drive LOW
+    nop               ; [3] synchroniser delay
+    nop               ; [4] synchroniser delay
+    nop               ; [5] synchroniser delay (RP1 needs 4 cycles)
+    in pins, 1        ; [6] sample pin → ISR
+    nop               ; [7] pad to match HIGH path
+.wrap

@@ -24,7 +24,7 @@ IS_RPI5 := $(shell test -e /dev/pio0 && echo yes || echo no)
 .PHONY: benchmark
 benchmark: gpio_loopback
 
-gpio_loopback: $(SRCS) gpio_loopback_tx.pio.h gpio_loopback_rx.pio.h \
+gpio_loopback: $(SRCS) gpio_loopback.pio.h \
                ../benchmark/benchmark_stats.h ../benchmark/benchmark_verify.h \
                ../benchmark/benchmark_format.h
 ifeq ($(FORCE_BUILD),1)
@@ -37,13 +37,24 @@ else
 	@false
 endif
 
+# ─── Target: test_1bit_dma (standalone diagnostic) ────────────
+test_1bit_dma: test_1bit_dma.c test_1bit_dma.pio.h
+ifeq ($(FORCE_BUILD),1)
+	$(CC) $(CFLAGS) -I/usr/include/piolib -o $@ $< -lpio -lpthread
+else ifeq ($(IS_RPI5),yes)
+	$(CC) $(CFLAGS) -I/usr/include/piolib -o $@ $< -lpio -lpthread
+else
+	@echo "ERROR: test target requires RPi5 with /dev/pio0 and libpio-dev"
+	@false
+endif
+
 # ─── Target: pioasm (regenerate headers) ─────────────────────
 .PHONY: pioasm
 pioasm:
-	pioasm gpio_loopback_tx.pio gpio_loopback_tx.pio.h
-	pioasm gpio_loopback_rx.pio gpio_loopback_rx.pio.h
+	pioasm gpio_loopback.pio gpio_loopback.pio.h
+	pioasm test_1bit_dma.pio test_1bit_dma.pio.h
 
 # ─── Target: clean ──────────────────────────────────────────
 .PHONY: clean
 clean:
-	rm -f gpio_loopback
+	rm -f gpio_loopback test_1bit_dma
