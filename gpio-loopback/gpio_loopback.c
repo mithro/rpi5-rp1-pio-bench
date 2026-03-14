@@ -255,6 +255,9 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    /* SM mask for simultaneous enable/disable. */
+    uint32_t sm_mask = (1u << sm_tx) | (1u << sm_rx);
+
     /* Load both PIO programs.
      * Initialize offsets to sentinel so cleanup_prog can skip unloaded ones. */
     uint tx_offset = PIO_ORIGIN_INVALID;
@@ -310,9 +313,6 @@ int main(int argc, char **argv)
     uint32_t dmactrl = build_dmactrl(dma_threshold, dma_priority);
     pio_sm_set_dmactrl(pio, (uint)sm_tx, true,  dmactrl);  /* TX direction */
     pio_sm_set_dmactrl(pio, (uint)sm_rx, false, dmactrl);  /* RX direction */
-
-    /* SM mask for simultaneous enable/disable. */
-    uint32_t sm_mask = (1u << sm_tx) | (1u << sm_rx);
 
     /* ─── Allocate buffers ──────────────────────────────────── */
 
