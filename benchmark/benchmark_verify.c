@@ -75,6 +75,33 @@ uint32_t bench_verify_not(const uint32_t *tx_buf, const uint32_t *rx_buf,
     return mismatches;
 }
 
+uint32_t bench_verify_identity(const uint32_t *tx_buf, const uint32_t *rx_buf,
+                                size_t word_count,
+                                size_t *first_mismatch_index,
+                                uint32_t *first_mismatch_expected,
+                                uint32_t *first_mismatch_actual)
+{
+    uint32_t mismatches = 0;
+    int first_found = 0;
+
+    for (size_t i = 0; i < word_count; i++) {
+        uint32_t expected = tx_buf[i];
+        if (rx_buf[i] != expected) {
+            if (!first_found) {
+                first_found = 1;
+                if (first_mismatch_index)
+                    *first_mismatch_index = i;
+                if (first_mismatch_expected)
+                    *first_mismatch_expected = expected;
+                if (first_mismatch_actual)
+                    *first_mismatch_actual = rx_buf[i];
+            }
+            mismatches++;
+        }
+    }
+    return mismatches;
+}
+
 void bench_generate_expected(const uint32_t *tx_buf, uint32_t *expected_buf,
                              size_t word_count)
 {

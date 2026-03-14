@@ -32,6 +32,17 @@ uint32_t bench_verify_not(const uint32_t *tx_buf, const uint32_t *rx_buf,
                           uint32_t *first_mismatch_expected,
                           uint32_t *first_mismatch_actual);
 
+/* Verify that rx_buf[i] == tx_buf[i] for all i in [0, word_count).
+ *
+ * Returns the number of mismatches. On the first mismatch, fills
+ * *first_mismatch_index, *first_mismatch_expected, and *first_mismatch_actual
+ * (these pointers may be NULL if the caller doesn't need them). */
+uint32_t bench_verify_identity(const uint32_t *tx_buf, const uint32_t *rx_buf,
+                                size_t word_count,
+                                size_t *first_mismatch_index,
+                                uint32_t *first_mismatch_expected,
+                                uint32_t *first_mismatch_actual);
+
 /* Generate the expected bitwise-NOT output for tx_buf into expected_buf.
  * expected_buf[i] = ~tx_buf[i] for all i in [0, word_count). */
 void bench_generate_expected(const uint32_t *tx_buf, uint32_t *expected_buf,
