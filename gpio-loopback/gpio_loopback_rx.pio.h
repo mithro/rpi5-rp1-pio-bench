@@ -8,9 +8,9 @@
 #include "hardware/pio.h"
 #endif
 
-// ------------------- //
+// ---------------- //
 // gpio_loopback_rx //
-// ------------------- //
+// ---------------- //
 
 #define gpio_loopback_rx_wrap_target 0
 #define gpio_loopback_rx_wrap 4
@@ -43,3 +43,4 @@ static inline pio_sm_config gpio_loopback_rx_program_get_default_config(uint off
     return c;
 }
 #endif
+

@@ -14,11 +14,12 @@
 .program gpio_loopback_tx
 
 .wrap_target
+top:
     out x, 1          ; [0] shift 1 bit from OSR → X (autopull refills)
     jmp !x low        ; [1] branch on bit value
     set pins, 1       ; [2] drive HIGH
     nop               ; [3] hold stable
-    jmp .wrap_target  ; [4] next bit
+    jmp top           ; [4] next bit
 low:
     set pins, 0       ; [2] drive LOW
     nop               ; [3] hold stable
