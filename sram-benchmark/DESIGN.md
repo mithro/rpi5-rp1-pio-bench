@@ -210,7 +210,7 @@ Host CPU ──write──→ DRAM buffer
 Host CPU ←─read──── DRAM buffer
 ```
 
-### Phase 3: Cyclic DMA (~9.1 MB/s achieved)
+### Phase 3: Cyclic DMA (SRAM: 54 MB/s TX, 45 MB/s RX — EXCEEDS 42 MB/s TARGET)
 
 **SRAM DMA ADDRESS FOUND:** The RP1 DMA controller CAN access shared SRAM at
 DMA address **`0xc020000000`** — the M3 TCM address (`0x20000000`) with the
@@ -219,16 +219,28 @@ pattern to SRAM via BAR2, then DMA reading from `0xc020008B00` through PIO
 loopback (NOT), produces the expected bitwise-NOT pattern in the RX buffer.
 1024/1024 words matched perfectly.
 
-**However, SRAM DMA does NOT improve throughput over host DRAM DMA:**
+**SRAM DMA significantly outperforms host DRAM DMA:**
 
-| Mode | Throughput | Data Path |
-|------|-----------|-----------|
-| DRAM (host, via PCIe) | **9.28 MB/s** | Host DRAM → PCIe → DMA → APB → PIO |
-| SRAM (RP1-internal) | **8.84 MB/s** | SRAM → DMA → APB → PIO |
+| Mode | TX Throughput | RX Throughput | Data Path |
+|------|-------------|-------------|-----------|
+| DRAM (host, via PCIe) | **40.81 MB/s** | **36.28 MB/s** | Host DRAM → PCIe → DMA → APB → PIO |
+| SRAM (RP1-internal) | **54.15 MB/s** | **45.13 MB/s** | SRAM → DMA → APB → PIO |
 
-The bottleneck is the DMA→APB→PIO FIFO handshake (~70 bus cycles per word),
-not the memory source. SRAM eliminates the PCIe round-trip for data fetches,
-but the APB bridge to PIO FIFOs dominates the transfer time.
+SRAM mode is ~33% faster than DRAM mode because it eliminates PCIe round-trips
+for DMA data fetches. The DMA controller reads from SRAM via the RP1-internal
+AXI bus (single-cycle) instead of issuing PCIe read completions.
+
+**Critical DMA configuration (fixed from initial 9.1 MB/s):**
+
+The initial implementation used suboptimal DMA settings that limited throughput
+to ~9 MB/s. Three fixes brought it to ~54 MB/s:
+
+| Setting | Before (9 MB/s) | After (54 MB/s) | Impact |
+|---------|-----------------|------------------|--------|
+| TX `dst_maxburst` | 4 | **8** | Use full heavy channel MSIZE=8 |
+| RX `src_maxburst` | **1** | **8** | 8× less handshake overhead |
+| DMACTRL threshold | TX=4, RX=**1** | TX=8, RX=**8** | Must match burst size (PR #7190) |
+| DMA period size | 1024 B | **4096 B** | 4× less interrupt overhead |
 
 **SRAM DMA address probe results:**
 
@@ -242,36 +254,41 @@ but the APB bridge to PIO FIFOs dominates the transfer time.
 | **`0xc020000000`** | **M3 TCM + 0xc0 prefix** | **PERFECT MATCH** |
 | `0x1f00400000` | CPU phys BAR2 | All 0xFFFFFFFF |
 
-**Implementation** uses both host DRAM and SRAM ring buffers with cyclic DMA.
-DRAM mode achieves **9.28 MB/s**, SRAM mode achieves **8.84 MB/s**, both with
-0 data errors:
+**Data paths:**
 
 ```
-Host CPU ──PCIe──→ Host DRAM ring buffer (dma_alloc_coherent, 16 KB)
-                      ↓ (PCIe read by RP1 DMA, ~70 cycle handshake per burst)
-                 RP1 DMA (cyclic) ──APB──→ PIO FIFO
-                                              ↓ (PIO program: NOT)
-                                           PIO FIFO
-                 RP1 DMA (cyclic) ──APB──← PIO FIFO
-                      ↑ (PCIe write by RP1 DMA)
-                   Host DRAM ring buffer
-Host CPU ←─PCIe──── Host DRAM ring buffer (dma_mmap_coherent)
+DRAM mode:
+  Host CPU ──PCIe──→ Host DRAM ring buffer (dma_alloc_coherent, 16 KB)
+                        ↓ (PCIe read by RP1 DMA, 8-beat bursts)
+                   RP1 DMA (cyclic) ──APB──→ PIO FIFO
+                                                ↓ (PIO program: NOT)
+                                             PIO FIFO
+                   RP1 DMA (cyclic) ──APB──← PIO FIFO
+                        ↑ (PCIe write by RP1 DMA)
+  Host CPU ←─PCIe──── Host DRAM ring buffer (dma_mmap_coherent)
+
+SRAM mode:
+  Host CPU ──PCIe──→ SRAM ring buffer (ioremap BAR2, 8 KB TX + 8 KB RX)
+                        ↓ (RP1-internal AXI, single-cycle, NO PCIe per burst)
+                   RP1 DMA (cyclic) ──APB──→ PIO FIFO
+                                                ↓ (PIO program: NOT)
+                                             PIO FIFO
+                   RP1 DMA (cyclic) ──APB──← PIO FIFO
+                        ↑ (RP1-internal AXI, NO PCIe per burst)
+  Host CPU ←─PCIe──── SRAM ring buffer (ioremap BAR2)
 ```
 
-Ring buffer layout (host DRAM, one 16 KB page):
+Ring buffer layout (16 KB, 2 periods × 4 KB):
 ```
-Offset 0x0000   8,192 B   TX ring (8 × 1 KB periods)
-Offset 0x2000   8,192 B   RX ring (8 × 1 KB periods)
+Offset 0x0000   8,192 B   TX ring (2 × 4 KB periods)
+Offset 0x2000   8,192 B   RX ring (2 × 4 KB periods)
 ```
-
-**Result: 9.1 MB/s — below 42 MB/s target.** The per-word PCIe+APB round-trip
-bottleneck remains because DMA source/destination is still host DRAM via PCIe.
-Cyclic DMA only eliminates userspace ioctl overhead between bursts.
 
 Implementation: `kmod/rp1_pio_sram.ko` + `sram_dma_bench.c`
 
 **Conclusion:** The only path to >42 MB/s is Phase 4 (M3 Core 1), which can
-access both SRAM and PIO FIFOs in single clock cycles.
+access both SRAM and PIO FIFOs in single clock cycles. However, Phase 3 with
+proper DMA configuration already exceeds 42 MB/s using SRAM ring buffers.
 
 ### Phase 4: M3 Core 1 Bridge (~6.88 MB/s achieved)
 
