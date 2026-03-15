@@ -59,19 +59,43 @@ sram: sram@400000 {
 };
 ```
 
-### Memory Regions
+### Actual Firmware SRAM Usage (Measured)
+
+**WARNING:** The device tree only reserves 0xFF00–0xFFFF (256 bytes) as the firmware
+mailbox, but the RP1 firmware actually uses **94.9% of shared SRAM** (61,676 bytes).
+Writing to firmware-occupied SRAM regions corrupts RP1 PIO state, causing all SM
+claims to return ETIMEDOUT. Recovery requires a full power cycle (Linux reboot does
+NOT reset RP1).
+
+Measured SRAM usage after fresh boot (via `sram_dump` and `sram_monitor`):
 
 ```
-Offset    Size      Purpose
-0x0000    16 KB     TX ring buffer (Phase 3: 4 periods x 4 KB)
-0x4000    16 KB     RX ring buffer (Phase 3: 4 periods x 4 KB)
-0x8000    28,416 B  Reserved / scratch / future use
-0xFEFF    -         End of safe region
-0xFF00    256 B     Firmware mailbox (DO NOT TOUCH)
-0xFFFF    -         End of SRAM
+Category           Words   Bytes    %     Notes
+Static non-zero    15,419  61,676   94.1  Firmware code/data loaded at boot
+Always zero           835   3,340    5.1  Scattered in tiny gaps (largest: 872 B)
+Dynamic               130     520    0.8  Counters/timestamps at 0x9F48-0xA14F
 ```
 
-**Available SRAM:** 65,280 bytes (0x0000–0xFEFF). Firmware uses 0xFF00–0xFFFF.
+Key non-zero regions:
+- `0x0000 - 0x04BF`: Firmware data structures (~1.2 KB)
+- `0x04C4 - 0x493B`: Massive firmware block (~17.5 KB, likely code)
+- `0x4940 - 0x7303`: More firmware data (~10 KB)
+- `0x7308 - 0x8BEF`: Sparse firmware structures (~5 KB)
+- `0x8BF0 - 0xA14F`: Mix of static and dynamic data (~5.5 KB)
+- `0xA178 - 0xB68F`: Firmware data (~5.6 KB)
+- `0xB728 - 0xFFFF`: Dense firmware data through mailbox (~18 KB)
+
+**Available SRAM for user buffers: effectively ZERO.**
+The 3,340 bytes of zero space is scattered in gaps too small for DMA ring buffers.
+
+### Implications for DMA Buffer Placement
+
+The Phase 3 plan assumed 32 KB of SRAM was available for DMA ring buffers.
+This is NOT the case. Alternative approaches:
+1. Use host DRAM for DMA buffers (current approach, ~42 MB/s)
+2. M3 Core 1 bridge (Phase 4) — avoids SRAM buffers entirely
+3. Negotiate SRAM allocation with firmware (requires firmware modification)
+4. Find a firmware version/config that uses less SRAM
 
 ### Host Access
 
@@ -126,22 +150,24 @@ Host CPU ──write──→ DRAM buffer
 Host CPU ←─read──── DRAM buffer
 ```
 
-### Phase 3: SRAM + Cyclic DMA (target >42 MB/s)
+### Phase 3: SRAM + Cyclic DMA — BLOCKED
 
+**STATUS:** Cannot implement as designed. RP1 firmware occupies 94.9% of shared
+SRAM. No contiguous free region large enough for DMA ring buffers (need 32 KB,
+largest zero gap is 872 bytes). Writing to firmware-occupied SRAM regions crashes
+RP1 PIO subsystem.
+
+Original plan required:
 ```
-Host CPU ──PCIe──→ SRAM ring buffer
+Host CPU ──PCIe──→ SRAM ring buffer (16 KB TX + 16 KB RX)
                       ↓ (RP1-internal AXI, no PCIe per burst)
                  RP1 DMA (cyclic) ──APB──→ PIO FIFO
-                                              ↓ (PIO program)
-                                           PIO FIFO
-                 RP1 DMA (cyclic) ──APB──← PIO FIFO
-                      ↑ (RP1-internal AXI)
-                   SRAM ring buffer
-Host CPU ←─PCIe──── SRAM ring buffer
 ```
 
-Key advantage: DMA reads/writes SRAM over internal AXI bus (single-cycle for
-M3, low-latency for DMA), eliminating per-burst PCIe round-trips.
+Possible unblocking paths:
+- Firmware modification to free SRAM regions
+- Different firmware configuration that uses less SRAM
+- Negotiate SRAM allocation via firmware RPC
 
 ### Phase 4: M3 Core 1 Bridge (target ~66 MB/s)
 
