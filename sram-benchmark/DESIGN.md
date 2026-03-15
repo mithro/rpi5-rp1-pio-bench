@@ -128,21 +128,24 @@ runtime (counter/timestamp updates every ~2 seconds). All other non-zero data
 is static after boot. The dynamic region is within the safe-to-overwrite zone,
 but overwriting it may affect firmware diagnostics or statistics.
 
-### Implications for DMA Buffer Placement
+### Implications for SRAM Usage
 
-The original Phase 3 plan assumed 32 KB was available for ring buffers.
-We have **~31.75 KB available** — enough for Phase 3 if we use a layout like:
+**SRAM cannot be used as DMA source/destination** — the RP1 DMA controller
+operates on the AXI bus and cannot reach M3 TCM memory.
 
+SRAM *can* be used as:
+1. **M3 Core 1 data buffers** — single-cycle access from Cortex-M3 cores
+2. **Host CPU data staging** — accessible via PCIe BAR2 mmap
+3. **Shared memory IPC** — between host CPU and M3 Core 1
+
+For Phase 4 (M3 Core 1 bridge), SRAM serves as the shared ring buffer between
+host CPU and Core 1's tight FIFO polling loop. Available safe regions:
 ```
-0x8000    2,560 B   Metadata / control structure
+0x8000    2,560 B   Available (firmware data, safe to overwrite)
 0x8A00    256 B     *** PIO DESCRIPTORS — DO NOT TOUCH ***
-0x8B00    14,336 B  TX ring buffer (14 KB = 4 periods × 3.5 KB)
-0xC900    14,080 B  RX ring buffer (~14 KB)
-0xFEFF              End of safe region
+0x8B00    29,952 B  Available (largest contiguous block)
 0xFF00    256 B     *** FIRMWARE MAILBOX — DO NOT TOUCH ***
 ```
-
-Alternative: skip Phase 3 and go directly to Phase 4 (M3 Core 1 bridge).
 
 ### References
 
@@ -204,34 +207,50 @@ Host CPU ──write──→ DRAM buffer
 Host CPU ←─read──── DRAM buffer
 ```
 
-### Phase 3: SRAM + Cyclic DMA (target >42 MB/s)
+### Phase 3: Cyclic DMA (~9.1 MB/s achieved)
 
-**STATUS:** Feasible with reduced buffer sizes. Region testing confirmed
-~31.75 KB of SRAM is writable without disrupting firmware operation.
+**STATUS: SRAM DMA IMPOSSIBLE.** RP1 shared SRAM is M3 Tightly Coupled Memory
+(TCM), not on the AXI bus. The RP1 DMA controller cannot access SRAM at any
+address. Tested addresses: `0x20000000` (M3 TCM), `0x40400000` (RP1 child bus),
+`0xc040400000` (full 40-bit from dma-ranges entry 2). All result in DMA callbacks
+firing but writes silently dropped to unmapped AXI space.
+
+Evidence:
+- `dma_map_resource()` returns the CPU physical address unchanged (identity
+  mapping) — SRAM falls outside all valid dma-ranges entries
+- dma-ranges entry 2 (`0xc040000000`, 4 MB) covers RP1 peripheral space but
+  routes through PCIe, not to TCM
+- SRAM is only accessible via M3 core (TCM bus) and PCIe BAR2 (host CPU)
+
+**Fallback implementation** uses `dma_alloc_coherent` host DRAM ring buffers
+with cyclic DMA, achieving **9.1 MB/s** per channel with 0 data errors:
 
 ```
-Host CPU ──PCIe──→ SRAM ring buffer (at 0x8B00-0xFEFF, ~29 KB)
-                      ↓ (RP1-internal AXI, no PCIe per burst)
+Host CPU ──PCIe──→ Host DRAM ring buffer (dma_alloc_coherent, 16 KB)
+                      ↓ (PCIe read by RP1 DMA, ~70 cycle handshake per burst)
                  RP1 DMA (cyclic) ──APB──→ PIO FIFO
-                                              ↓ (PIO program)
+                                              ↓ (PIO program: NOT)
                                            PIO FIFO
                  RP1 DMA (cyclic) ──APB──← PIO FIFO
-                      ↑ (RP1-internal AXI)
-                   SRAM ring buffer
-Host CPU ←─PCIe──── SRAM ring buffer
+                      ↑ (PCIe write by RP1 DMA)
+                   Host DRAM ring buffer
+Host CPU ←─PCIe──── Host DRAM ring buffer (dma_mmap_coherent)
 ```
 
-Revised SRAM ring buffer layout:
+Ring buffer layout (host DRAM, one 16 KB page):
 ```
-0x8000    2,560 B   Control/metadata
-0x8A00    256 B     *** PIO DESCRIPTORS — SKIP ***
-0x8B00    14,080 B  TX ring buffer (~14 KB, 4 periods × 3.5 KB)
-0xC200    15,616 B  RX ring buffer (~15 KB, 4 periods × ~3.8 KB)
-0xFEFF              End of safe region
+Offset 0x0000   8,192 B   TX ring (8 × 1 KB periods)
+Offset 0x2000   8,192 B   RX ring (8 × 1 KB periods)
 ```
 
-Key advantage: DMA reads/writes SRAM over internal AXI bus,
-eliminating per-burst PCIe round-trips.
+**Result: 9.1 MB/s — below 42 MB/s target.** The per-word PCIe+APB round-trip
+bottleneck remains because DMA source/destination is still host DRAM via PCIe.
+Cyclic DMA only eliminates userspace ioctl overhead between bursts.
+
+Implementation: `kmod/rp1_pio_sram.ko` + `sram_dma_bench.c`
+
+**Conclusion:** The only path to >42 MB/s is Phase 4 (M3 Core 1), which can
+access both SRAM and PIO FIFOs in single clock cycles.
 
 ### Phase 4: M3 Core 1 Bridge (target ~66 MB/s)
 
