@@ -20,7 +20,7 @@
  *   0x7000-0x701F: SEV launch stub (Core 0 IRQ hook, ~24 bytes)
  *   0x8A00-0x8AFF: PIO descriptors — DO NOT TOUCH
  *   0x8B00+:       Core 1 firmware (loaded from .bin file)
- *   0x8C00-0x8C0F: Core 1 status (magic + counter)
+ *   0x8D00-0x8D3F: Core 1 status (magic + counter + PIO diag)
  *
  * Requires: RPi5, sudo, /dev/mem access
  *
@@ -65,7 +65,7 @@
 /* SRAM layout */
 #define STUB_OFFSET     0x7000   /* SEV stub (in firmware code region) */
 #define FW_LOAD_OFFSET  0x8B00   /* Core 1 firmware load address */
-#define STATUS_OFFSET   0x8C00   /* Core 1 status (magic + counter) */
+#define STATUS_OFFSET   0x8D00   /* Core 1 status (must be beyond firmware end) */
 #define STATUS_MAGIC    0xC0DE1234
 
 /* SRAM base in M3 address space */
@@ -184,8 +184,8 @@ static int load_firmware(const char *path)
     }
 
     size_t size = (size_t)st.st_size;
-    if (size > 0x100) {
-        fprintf(stderr, "ERROR: firmware too large (%zu bytes, max 256)\n", size);
+    if (size > 0x500) {
+        fprintf(stderr, "ERROR: firmware too large (%zu bytes, max 1280)\n", size);
         fclose(f);
         return -1;
     }
@@ -193,7 +193,7 @@ static int load_firmware(const char *path)
     printf("  Loading %s (%zu bytes) to SRAM 0x%08X\n",
            path, size, SRAM_M3_BASE + FW_LOAD_OFFSET);
 
-    uint8_t buf[256];
+    uint8_t buf[0x500];
     memset(buf, 0, sizeof(buf));
     if (fread(buf, 1, size, f) != size) {
         perror("fread");
@@ -451,7 +451,19 @@ int main(int argc, char *argv[])
         SRAM(vec_offs[i]) = orig_handlers[i];
     printf("  Restored %d vector entries\n", n_irqs);
 
+    /* Diagnostic: dump status area to distinguish "never started" from "crashed" */
     fprintf(stderr, "\nERROR: SEV hook failed — Core 1 did not start\n");
+    fprintf(stderr, "  Status area dump (0x%08X):\n", SRAM_M3_BASE + STATUS_OFFSET);
+    for (int i = 0; i < 10; i++) {
+        fprintf(stderr, "    +0x%02X: 0x%08X\n", i * 4, SRAM(STATUS_OFFSET + i * 4));
+    }
+    /* Also check if magic was written (Core 1 started but crashed) */
+    uint32_t diag_magic = SRAM(STATUS_OFFSET + 0);
+    if (diag_magic == STATUS_MAGIC)
+        fprintf(stderr, "  → Magic IS present — Core 1 started but crashed!\n");
+    else
+        fprintf(stderr, "  → Magic NOT present (0x%08X) — Core 1 never reached _entry\n",
+                diag_magic);
     return 1;
 
 verify:
@@ -466,6 +478,19 @@ verify:
     printf("  Core 1 is RUNNING!\n");
     printf("  magic=0x%08X counter=%u\n",
            SRAM(STATUS_OFFSET + 0), SRAM(STATUS_OFFSET + 4));
+    /* Diagnostic readbacks from PIO firmware */
+    printf("  PIO diagnostics (step=%u):\n", SRAM(STATUS_OFFSET + 0x0C));
+    printf("    tx_val=0x%08X rx_val=0x%08X exp_val=0x%08X\n",
+           SRAM(STATUS_OFFSET + 0x10), SRAM(STATUS_OFFSET + 0x14),
+           SRAM(STATUS_OFFSET + 0x18));
+    printf("    fstat_init=0x%08X  fstat_post_tx=0x%08X\n",
+           SRAM(STATUS_OFFSET + 0x1C), SRAM(STATUS_OFFSET + 0x20));
+    printf("    addr_pre_pull=0x%08X  fstat_post_pull=0x%08X  addr_post_pull=0x%08X\n",
+           SRAM(STATUS_OFFSET + 0x24), SRAM(STATUS_OFFSET + 0x28),
+           SRAM(STATUS_OFFSET + 0x2C));
+    printf("    fstat_post_push=0x%08X  addr_post_push=0x%08X\n",
+           SRAM(STATUS_OFFSET + 0x30), SRAM(STATUS_OFFSET + 0x34));
+    printf("    fstat_pre_rx=0x%08X\n", SRAM(STATUS_OFFSET + 0x38));
     printf("\n");
 
 monitor:
@@ -476,11 +501,23 @@ monitor:
 
     for (int s = 0; s < monitor_secs; s++) {
         sleep(1);
-        uint32_t c_now = SRAM(STATUS_OFFSET + 4);
-        double elapsed = gettime() - t_start;
-        double rate = (c_now - c_start) / elapsed;
-        printf("  t=%ds: counter=%u (+%u) rate=%.1f loops/sec\n",
+        uint32_t c_now  = SRAM(STATUS_OFFSET + 0x04);
+        double elapsed  = gettime() - t_start;
+        double rate     = (c_now - c_start) / elapsed;
+
+        /* Extended status fields (PIO FIFO test firmware) */
+        uint32_t result   = SRAM(STATUS_OFFSET + 0x08);
+
+        printf("  t=%ds: counter=%u (+%u) rate=%.1f loops/sec",
                s + 1, c_now, c_now - c_prev, rate);
+
+        if (result != 0) {
+            const char *res_str = (result == 1) ? "PASS" :
+                                  (result == 2) ? "FAIL" : "???";
+            printf(" result=%s", res_str);
+        }
+        printf("\n");
+
         c_prev = c_now;
     }
 
@@ -490,6 +527,13 @@ monitor:
            c_end - c_start, total_time,
            (c_end - c_start) / total_time / 1e6);
 
+    /* Final PIO status summary */
+    uint32_t final_result = SRAM(STATUS_OFFSET + 0x08);
+    if (final_result != 0) {
+        printf("\n  PIO FIFO test: %s\n",
+               (final_result == 1) ? "PASS" : "FAIL");
+    }
+
     printf("\nDone. Core 1 continues running.\n");
-    return 0;
+    return (final_result == 2) ? 1 : 0;
 }

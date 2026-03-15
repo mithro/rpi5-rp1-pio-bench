@@ -18,16 +18,16 @@ CFLAGS   := -Wall -Wextra -Werror -O2 -std=c11
 
 .PHONY: all clean
 
-all: sram_write_test.bin core1_launcher
+all: sram_write_test.bin pio_fifo_test.bin core1_launcher
 
-# ─── Core 1 firmware ───────────────────────────────────────
-sram_write_test.o: sram_write_test.s
+# ─── Core 1 firmware (common pattern) ─────────────────────
+%.o: %.s
 	$(AS) $(ASFLAGS) $< -o $@
 
-sram_write_test.elf: sram_write_test.o
+%.elf: %.o memmap_core1
 	$(LD) $< -T memmap_core1 -o $@
 
-sram_write_test.bin: sram_write_test.elf
+%.bin: %.elf
 	$(OBJCOPY) $< -O binary $@
 
 # ─── Host launcher ─────────────────────────────────────────

@@ -6,9 +6,9 @@
  * Memory layout:
  *   Code:    0x20008B00 (vector table + code, in safe SRAM region)
  *   Stack:   0x200089F0 (grows down through 0x8000-0x89FF)
- *   Status:  0x20008C00 (magic + counter, readable by host)
+ *   Status:  0x20008D00 (magic + counter, readable by host)
  *
- * Status words at 0x20008C00:
+ * Status words at 0x20008D00:
  *   +0x00: magic     = 0xC0DE1234 (proves Core 1 ran)
  *   +0x04: counter   = incrementing (proves Core 1 is alive)
  *   +0x08: timestamp = SysTick value (if available)
@@ -33,7 +33,7 @@ _vectors:
 .globl _entry
 _entry:
     /* Write magic value to status area */
-    ldr r0, =0x20008C00     /* Status base address */
+    ldr r0, =0x20008D00     /* Status base address */
     ldr r1, =0xC0DE1234     /* Magic value */
     str r1, [r0]             /* status[0] = magic */
 
