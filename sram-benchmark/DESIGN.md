@@ -18,37 +18,31 @@ that limits the standard kernel DMA path to ~42 MB/s.
 
 ### PIO FIFO Registers (offsets from PIO base `0x4017_8000`)
 
+**WARNING:** RP1 PIO register offsets differ from RP2040/RP2350!
+These offsets come from the `rp1-pio` kernel driver (`drivers/misc/rp1-pio.c`).
+
 | Register | Offset | BCM2712 Physical | Purpose |
 |----------|--------|-------------------|---------|
-| FSTAT | `0x004` | `0x1F_0017_8004` | FIFO status (TX full, RX empty bits) |
-| TXF0 | `0x010` | `0x1F_0017_8010` | TX FIFO for SM0 (write-only) |
-| TXF1 | `0x014` | `0x1F_0017_8014` | TX FIFO for SM1 |
-| TXF2 | `0x018` | `0x1F_0017_8018` | TX FIFO for SM2 |
-| TXF3 | `0x01C` | `0x1F_0017_801C` | TX FIFO for SM3 |
-| RXF0 | `0x020` | `0x1F_0017_8020` | RX FIFO for SM0 (read-only) |
-| RXF1 | `0x024` | `0x1F_0017_8024` | RX FIFO for SM1 |
-| RXF2 | `0x028` | `0x1F_0017_8028` | RX FIFO for SM2 |
-| RXF3 | `0x02C` | `0x1F_0017_802C` | RX FIFO for SM3 |
+| TXF0 | `0x000` | `0x1F_0017_8000` | TX FIFO for SM0 (write-only) |
+| TXF1 | `0x004` | `0x1F_0017_8004` | TX FIFO for SM1 |
+| TXF2 | `0x008` | `0x1F_0017_8008` | TX FIFO for SM2 |
+| TXF3 | `0x00C` | `0x1F_0017_800C` | TX FIFO for SM3 |
+| RXF0 | `0x010` | `0x1F_0017_8010` | RX FIFO for SM0 (read-only) |
+| RXF1 | `0x014` | `0x1F_0017_8014` | RX FIFO for SM1 |
+| RXF2 | `0x018` | `0x1F_0017_8018` | RX FIFO for SM2 |
+| RXF3 | `0x01C` | `0x1F_0017_801C` | RX FIFO for SM3 |
 
-### FSTAT Register Layout (offset `0x004`)
+### FSTAT and Control Registers
 
-```
-Bit  Field         Description
-31:27  -           Reserved
-26:24  RXFULL      RX FIFO full flags (1 bit per SM, SM0 = bit 24)
-23:19  -           Reserved
-18:16  RXEMPTY     RX FIFO empty flags (1 bit per SM, SM0 = bit 16)
-15:11  -           Reserved
-10:8   TXFULL      TX FIFO full flags (1 bit per SM, SM0 = bit 8)
- 7:3   -           Reserved
- 2:0   TXEMPTY     TX FIFO empty flags (1 bit per SM, SM0 = bit 0)
-```
+**FSTAT, CTRL, and other PIO control registers are NOT directly accessible
+from the host.** They are accessed through the RP1 firmware RPC layer
+(via `rp1_firmware_message()` in the kernel driver). Use piolib ioctl
+functions (e.g., `pio_sm_is_tx_fifo_full()`) for FIFO status checks.
 
-For SM0:
-- TX full:  `FSTAT & (1 << 8)`  — stop writing when set
-- TX empty: `FSTAT & (1 << 0)`  — FIFO drained
-- RX full:  `FSTAT & (1 << 24)` — FIFO overflow risk
-- RX empty: `FSTAT & (1 << 16)` — nothing to read
+**Critical constraint:** Mixing direct FIFO register writes with piolib
+ioctl-based FSTAT polling can desynchronize the firmware's view of FIFO
+state, causing ioctl calls to hang. For throughput-critical paths, use
+pure direct register access (lockstep write TX → read RX).
 
 ## SRAM Layout
 
