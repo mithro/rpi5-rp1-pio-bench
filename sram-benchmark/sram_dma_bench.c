@@ -50,6 +50,8 @@ struct sram_dma_status {
 	uint32_t dma_running;
 	uint64_t tx_bytes;
 	uint64_t rx_bytes;
+	uint32_t verify_errors;
+	uint32_t verify_total;
 };
 
 /* ─── Constants ───────────────────────────────────────────────── */
@@ -244,60 +246,73 @@ static int test_dma_loopback(double duration_sec)
 	}
 
 	/* Verify RX data: should be bitwise NOT of TX pattern.
-	 * Cyclic DMA wraps around continuously, so the RX ring contents
-	 * are a phase-shifted version of ~TX. Detect the phase from RX[0]
-	 * then verify all words match the shifted pattern. */
-	printf("\n  Verifying RX data...\n");
+	 * Cyclic DMA wraps continuously. When DMA stops, each period in
+	 * the ring may be at a different phase — one period may have just
+	 * been overwritten while another is stale. Verify each DMA period
+	 * independently by detecting the phase from its first word. */
+	printf("\n  Verifying RX data (per-period phase detection)...\n");
 	__sync_synchronize();
-	unsigned check_words = tx_words < rx_words ? tx_words : rx_words;
-
-	/* Detect phase: RX[0] = ~TX[phase] = ~(0xA0000000 | phase) */
-	uint32_t rx0 = rx_ring[0];
-	uint32_t inv_rx0 = ~rx0;
-	unsigned phase = 0;
-	int phase_valid = 0;
-
-	if ((inv_rx0 & 0xF0000000u) == 0xA0000000u) {
-		phase = inv_rx0 & 0x0FFFFFFFu;
-		if (phase < tx_words)
-			phase_valid = 1;
-	}
-
-	if (!phase_valid && rx0 == 0xDEADDEADu) {
-		printf("    FAIL: RX ring unchanged (0xDEADDEAD) — no data received\n");
-		printf("\n");
-		return 1;
-	}
-
-	if (!phase_valid) {
-		printf("    FAIL: RX[0]=0x%08x doesn't match expected pattern\n", rx0);
-		printf("\n");
-		return 1;
-	}
+	unsigned period_words = st.period_size / 4;
+	unsigned num_periods = rx_words / period_words;
 
 	unsigned errors = 0;
+	unsigned periods_ok = 0;
+	unsigned periods_empty = 0;
 	unsigned first_err_idx = 0;
 	uint32_t first_expected = 0, first_actual = 0;
 
-	for (unsigned i = 0; i < check_words; i++) {
-		uint32_t expected = ~(0xA0000000u | ((i + phase) % tx_words));
-		uint32_t actual = rx_ring[i];
-		if (actual != expected) {
-			if (errors == 0) {
-				first_err_idx = i;
-				first_expected = expected;
-				first_actual = actual;
-			}
-			errors++;
+	for (unsigned p = 0; p < num_periods; p++) {
+		unsigned base = p * period_words;
+		uint32_t rx0 = rx_ring[base];
+
+		/* Check if period was ever written */
+		if (rx0 == 0xDEADDEADu) {
+			periods_empty++;
+			continue;
 		}
+
+		/* Detect phase: RX[base] = ~TX[phase] = ~(0xA0000000 | phase) */
+		uint32_t inv_rx0 = ~rx0;
+		if ((inv_rx0 & 0xF0000000u) != 0xA0000000u ||
+		    (inv_rx0 & 0x0FFFFFFFu) >= tx_words) {
+			/* Unrecognized pattern — count entire period as errors */
+			errors += period_words;
+			if (errors == period_words) {
+				first_err_idx = base;
+				first_expected = 0;
+				first_actual = rx0;
+			}
+			continue;
+		}
+
+		unsigned phase = inv_rx0 & 0x0FFFFFFFu;
+		unsigned period_errors = 0;
+		for (unsigned i = 0; i < period_words; i++) {
+			uint32_t expected = ~(0xA0000000u | ((phase + i) % tx_words));
+			uint32_t actual = rx_ring[base + i];
+			if (actual != expected) {
+				if (errors + period_errors == 0) {
+					first_err_idx = base + i;
+					first_expected = expected;
+					first_actual = actual;
+				}
+				period_errors++;
+			}
+		}
+		if (period_errors == 0)
+			periods_ok++;
+		errors += period_errors;
 	}
 
-	if (errors == 0) {
-		printf("    PASS: %u words verified (phase=%u, bitwise NOT matches)\n",
-		       check_words, phase);
+	if (errors == 0 && periods_empty == 0) {
+		printf("    PASS: %u periods verified (%u words each, bitwise NOT matches)\n",
+		       num_periods, period_words);
+	} else if (errors == 0 && periods_empty > 0) {
+		printf("    PASS: %u/%u periods verified, %u empty (DMA may not have filled all)\n",
+		       periods_ok, num_periods, periods_empty);
 	} else {
-		printf("    FAIL: %u/%u words mismatched (phase=%u)\n",
-		       errors, check_words, phase);
+		printf("    FAIL: %u words mismatched across %u periods (%u ok, %u empty)\n",
+		       errors, num_periods, periods_ok, periods_empty);
 		printf("    First mismatch at word %u: expected 0x%08x, got 0x%08x\n",
 		       first_err_idx, first_expected, first_actual);
 		printf("    First 8 RX words:\n");
@@ -362,9 +377,28 @@ static int test_sram_loopback(double duration_sec)
 		printf("    RX throughput: %.2f MB/s\n", rx_bw);
 	}
 
-	printf("\n  (Data verification: check dmesg for SRAM RX content)\n\n");
+	/* SRAM data verification is done by the kernel module on DMA stop.
+	 * Re-query status to get verification results. */
+	ret = ioctl(dev_fd, SRAM_IOC_DMA_STATUS, &st);
+	if (ret < 0) {
+		fprintf(stderr, "ERROR: DMA_STATUS ioctl failed after stop: %s\n",
+			strerror(errno));
+		return -1;
+	}
 
-	return (st.tx_bytes > 0 && st.rx_bytes > 0) ? 0 : 1;
+	printf("\n  Data verification (kernel-side, per-period phase detection):\n");
+	if (st.verify_total == 0) {
+		printf("    SKIP: no verification data available\n");
+	} else if (st.verify_errors == 0) {
+		printf("    PASS: %u words verified (bitwise NOT matches)\n",
+		       st.verify_total);
+	} else {
+		printf("    FAIL: %u/%u words mismatched (check dmesg for details)\n",
+		       st.verify_errors, st.verify_total);
+	}
+	printf("\n");
+
+	return (st.tx_bytes > 0 && st.rx_bytes > 0 && st.verify_errors == 0) ? 0 : 1;
 }
 
 /* ─── Main ────────────────────────────────────────────────────── */

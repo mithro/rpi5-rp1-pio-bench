@@ -86,6 +86,8 @@ struct sram_dma_status {
 	__u32 dma_running;
 	__u64 tx_bytes;
 	__u64 rx_bytes;
+	__u32 verify_errors;     /* errors from last stop (SRAM mode) */
+	__u32 verify_total;      /* total words checked */
 };
 
 /* RP1 PIO DMACTRL value: DREQ_EN (bit 31) + threshold=8 for heavy channels.
@@ -111,6 +113,10 @@ static u64 rx_period_count;
 /* DMA buffer (coherent host DRAM) */
 static void *dma_buf;
 static dma_addr_t dma_buf_addr;
+
+/* Verification results from last stop_cyclic_dma() */
+static u32 last_verify_errors;
+static u32 last_verify_total;
 
 /* ─── DMA callbacks ─────────────────────────────────────────── */
 
@@ -353,14 +359,61 @@ static void stop_cyclic_dma(void)
 		sram_dma_mode ? "SRAM" : "DRAM",
 		tx_period_count, rx_period_count);
 
-	/* Debug: show buffer contents */
+	/* Verify data integrity: check each DMA period independently.
+	 * Cyclic DMA wraps continuously, so each period may be at a
+	 * different phase of the TX pattern when DMA stops. */
+	last_verify_errors = 0;
+	last_verify_total = 0;
+
 	if (sram_dma_mode && sram_io) {
-		u32 tx0 = ioread32(sram_io + SRAM_TX_RING_OFF);
-		u32 tx1 = ioread32(sram_io + SRAM_TX_RING_OFF + 4);
-		u32 rx0 = ioread32(sram_io + SRAM_RX_RING_OFF);
-		u32 rx1 = ioread32(sram_io + SRAM_RX_RING_OFF + 4);
-		pr_info("rp1_pio_sram: SRAM TX[0..1]: 0x%08x 0x%08x\n", tx0, tx1);
-		pr_info("rp1_pio_sram: SRAM RX[0..1]: 0x%08x 0x%08x\n", rx0, rx1);
+		unsigned per_words = DMA_PERIOD_SIZE / 4;
+		unsigned total_words = SRAM_RX_RING_SIZE / 4;
+		unsigned tx_words = SRAM_TX_RING_SIZE / 4;
+		unsigned num_periods = total_words / per_words;
+		unsigned p, i;
+		u32 first_err_exp = 0, first_err_got = 0;
+		unsigned first_err_idx = 0;
+
+		last_verify_total = total_words;
+
+		for (p = 0; p < num_periods; p++) {
+			unsigned base = p * per_words;
+			u32 rx0 = ioread32(sram_io + SRAM_RX_RING_OFF + base * 4);
+			u32 inv_rx0 = ~rx0;
+			unsigned phase;
+
+			if (rx0 == 0xDEADDEADu) {
+				last_verify_errors += per_words;
+				continue;
+			}
+
+			if ((inv_rx0 & 0xF0000000u) != 0xA0000000u ||
+			    (inv_rx0 & 0x0FFFFFFFu) >= tx_words) {
+				last_verify_errors += per_words;
+				continue;
+			}
+
+			phase = inv_rx0 & 0x0FFFFFFFu;
+			for (i = 0; i < per_words; i++) {
+				u32 expected = ~(0xA0000000u | ((phase + i) % tx_words));
+				u32 actual = ioread32(sram_io + SRAM_RX_RING_OFF + (base + i) * 4);
+				if (actual != expected) {
+					if (last_verify_errors == 0) {
+						first_err_idx = base + i;
+						first_err_exp = expected;
+						first_err_got = actual;
+					}
+					last_verify_errors++;
+				}
+			}
+		}
+
+		pr_info("rp1_pio_sram: SRAM verify: %u/%u errors (%u periods)\n",
+			last_verify_errors, total_words, num_periods);
+		if (last_verify_errors > 0)
+			pr_info("rp1_pio_sram: first error at [%u]: expected 0x%08x got 0x%08x\n",
+				first_err_idx, first_err_exp, first_err_got);
+
 	} else if (dma_buf) {
 		u32 *tx = (u32 *)(dma_buf + TX_RING_OFFSET);
 		u32 *rx = (u32 *)(dma_buf + RX_RING_OFFSET);
@@ -534,8 +587,13 @@ static int dma_diag_test(void)
 	int ret, i, errors;
 	u64 diag_tx_periods, diag_rx_periods;
 
-	#define DIAG_BUF_SIZE  4096
-	#define DIAG_PERIOD    1024
+	/* Use 8 KB ring with 4 KB periods to match the main test config.
+	 * The old 4 KB ring with 1 KB periods failed because the cyclic
+	 * DMA wraps too quickly, creating phase discontinuities. */
+	#define DIAG_BUF_SIZE  8192
+	#define DIAG_PERIOD    4096
+	#define DIAG_WORDS     (DIAG_BUF_SIZE / 4)
+	#define DIAG_PER_WORDS (DIAG_PERIOD / 4)
 
 	if (!tx_chan || !rx_chan)
 		return -ENODEV;
@@ -556,7 +614,7 @@ static int dma_diag_test(void)
 	/* Fill TX with pattern, clear RX */
 	tx_words = (u32 *)tx_buf;
 	rx_words = (u32 *)rx_buf;
-	for (i = 0; i < DIAG_BUF_SIZE / 4; i++) {
+	for (i = 0; i < DIAG_WORDS; i++) {
 		tx_words[i] = 0xA0000000u | i;
 		rx_words[i] = 0xDEADDEADu;
 	}
@@ -625,16 +683,51 @@ static int dma_diag_test(void)
 	if (pio_client)
 		pio_sm_clear_fifos(pio_client, 0);
 
-	/* Check results */
+	/* Verify RX data with phase-aware checking.
+	 * Cyclic DMA wraps continuously, so each period in the RX ring
+	 * may be at a different phase of the TX pattern. Check each
+	 * period independently by detecting its phase from the first word. */
 	errors = 0;
-	for (i = 0; i < DIAG_BUF_SIZE / 4; i++) {
-		u32 expected = ~(0xA0000000u | (i % (DIAG_BUF_SIZE / 4)));
-		if (rx_words[i] != expected)
-			errors++;
+	for (i = 0; i < DIAG_WORDS; i += DIAG_PER_WORDS) {
+		u32 rx0 = rx_words[i];
+		u32 inv_rx0 = ~rx0;
+		unsigned phase;
+		int j;
+
+		if (rx0 == 0xDEADDEADu) {
+			/* Period never written — count all words as errors */
+			errors += DIAG_PER_WORDS;
+			pr_info("rp1_pio_sram: DIAG: period %d: no data received\n",
+				i / DIAG_PER_WORDS);
+			continue;
+		}
+
+		if ((inv_rx0 & 0xF0000000u) != 0xA0000000u ||
+		    (inv_rx0 & 0x0FFFFFFFu) >= DIAG_WORDS) {
+			/* Can't determine phase — count all as errors */
+			errors += DIAG_PER_WORDS;
+			pr_info("rp1_pio_sram: DIAG: period %d: unrecognized RX[0]=0x%08x\n",
+				i / DIAG_PER_WORDS, rx0);
+			continue;
+		}
+
+		phase = inv_rx0 & 0x0FFFFFFFu;
+		for (j = 0; j < DIAG_PER_WORDS; j++) {
+			u32 expected = ~(0xA0000000u | ((phase + j) % DIAG_WORDS));
+			if (rx_words[i + j] != expected)
+				errors++;
+		}
 	}
 
 	pr_info("rp1_pio_sram: DIAG: TX=%llu RX=%llu periods, %d/%d errors\n",
-		diag_tx_periods, diag_rx_periods, errors, DIAG_BUF_SIZE / 4);
+		diag_tx_periods, diag_rx_periods, errors, DIAG_WORDS);
+
+	if (errors > 0 && diag_rx_periods > 0) {
+		/* Show first few RX words for debugging */
+		pr_info("rp1_pio_sram: DIAG: RX[0..7]: %08x %08x %08x %08x %08x %08x %08x %08x\n",
+			rx_words[0], rx_words[1], rx_words[2], rx_words[3],
+			rx_words[4], rx_words[5], rx_words[6], rx_words[7]);
+	}
 
 	ret = (errors == 0 && diag_tx_periods > 0) ? 0 : -EIO;
 
@@ -883,6 +976,8 @@ static long rp1_pio_sram_ioctl(struct file *file, unsigned int cmd,
 				.dma_running = dma_running ? 1 : 0,
 				.tx_bytes = tx_period_count * DMA_PERIOD_SIZE,
 				.rx_bytes = rx_period_count * DMA_PERIOD_SIZE,
+				.verify_errors = last_verify_errors,
+				.verify_total = last_verify_total,
 			};
 		} else {
 			st = (struct sram_dma_status){
@@ -894,6 +989,8 @@ static long rp1_pio_sram_ioctl(struct file *file, unsigned int cmd,
 				.dma_running = dma_running ? 1 : 0,
 				.tx_bytes = tx_period_count * DMA_PERIOD_SIZE,
 				.rx_bytes = rx_period_count * DMA_PERIOD_SIZE,
+				.verify_errors = last_verify_errors,
+				.verify_total = last_verify_total,
 			};
 		}
 		if (copy_to_user((void __user *)arg, &st, sizeof(st)))
