@@ -23,7 +23,7 @@ IS_RPI5 := $(shell test -e /dev/pio0 && echo yes || echo no)
 
 # ─── Default target ─────────────────────────────────────────
 .PHONY: all
-all: sram_probe fifo_probe sram_dma_bench
+all: sram_probe fifo_probe sram_dma_bench sram_addr_probe
 
 # ─── Target: sram_probe (requires /dev/mem access) ──────────
 sram_probe: sram_probe.c
@@ -64,7 +64,19 @@ else
 	@false
 endif
 
+# ─── Target: sram_addr_probe (requires rp1_pio_sram.ko) ──────
+sram_addr_probe: sram_addr_probe.c ../benchmark/loopback.pio.h
+ifeq ($(FORCE_BUILD),1)
+	$(CC) $(BENCH_CFLAGS) -o $@ sram_addr_probe.c -lpio -lm
+else ifeq ($(IS_RPI5),yes)
+	$(CC) $(BENCH_CFLAGS) -o $@ sram_addr_probe.c -lpio -lm
+else
+	@echo "ERROR: sram_addr_probe requires RPi5 with /dev/pio0 and libpio-dev"
+	@echo "Use FORCE_BUILD=1 to override."
+	@false
+endif
+
 # ─── Target: clean ──────────────────────────────────────────
 .PHONY: clean
 clean:
-	rm -f sram_probe fifo_probe sram_dma_bench
+	rm -f sram_probe fifo_probe sram_dma_bench sram_addr_probe
