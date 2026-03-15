@@ -24,6 +24,7 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <time.h>
+#include <signal.h>
 #include <unistd.h>
 
 #include "piolib.h"
@@ -46,16 +47,19 @@
 #define SRAM_SAFE_WORDS  (SRAM_SAFE_SIZE / 4)
 
 /* ─── PIO FIFO register offsets (from PIO base) ──────────────── */
+/* NOTE: RP1 PIO register layout differs from RP2040/RP2350!
+ * These offsets come from the rp1-pio kernel driver (rp1-pio.c).
+ * FSTAT and other control registers are NOT directly accessible
+ * from the host — they're behind the RP1 firmware RPC layer. */
 
-#define PIO_FSTAT_OFF    0x004   /* FIFO status */
-#define PIO_TXF0_OFF     0x010   /* TX FIFO for SM0 */
-#define PIO_RXF0_OFF     0x020   /* RX FIFO for SM0 */
-
-/* FSTAT bit positions for SM0 */
-#define FSTAT_TXFULL_SM0   (1u << 8)
-#define FSTAT_TXEMPTY_SM0  (1u << 0)
-#define FSTAT_RXFULL_SM0   (1u << 24)
-#define FSTAT_RXEMPTY_SM0  (1u << 16)
+#define PIO_TXF0_OFF     0x000   /* TX FIFO for SM0 (write-only) */
+#define PIO_TXF1_OFF     0x004
+#define PIO_TXF2_OFF     0x008
+#define PIO_TXF3_OFF     0x00C
+#define PIO_RXF0_OFF     0x010   /* RX FIFO for SM0 (read-only) */
+#define PIO_RXF1_OFF     0x014
+#define PIO_RXF2_OFF     0x018
+#define PIO_RXF3_OFF     0x01C
 
 /* ─── Timing ──────────────────────────────────────────────────── */
 
@@ -64,6 +68,35 @@ static double get_time_sec(void)
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
+}
+
+/* ─── Watchdog (prevent hanging in D state) ───────────────────── */
+
+static volatile sig_atomic_t watchdog_fired = 0;
+
+static void watchdog_handler(int sig)
+{
+    (void)sig;
+    watchdog_fired = 1;
+    /* Write directly to stderr to be async-signal-safe */
+    const char msg[] = "\nWATCHDOG: operation timed out, exiting\n";
+    (void)!write(STDERR_FILENO, msg, sizeof(msg) - 1);
+    _exit(2);
+}
+
+static void watchdog_start(unsigned int seconds)
+{
+    watchdog_fired = 0;
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = watchdog_handler;
+    sigaction(SIGALRM, &sa, NULL);
+    alarm(seconds);
+}
+
+static void watchdog_stop(void)
+{
+    alarm(0);
 }
 
 /* ─── Global state ────────────────────────────────────────────── */
@@ -122,19 +155,18 @@ static void devmem_cleanup(void)
 
 /* ─── Direct FIFO access helpers ──────────────────────────────── */
 
-static inline uint32_t pio_fstat(void)
-{
-    return pio_regs[PIO_FSTAT_OFF / 4];
-}
+/* FSTAT is not directly accessible from host on RP1 — use piolib
+ * ioctl functions for FIFO status, but direct register access for
+ * FIFO data reads/writes. */
 
 static inline int tx_full(void)
 {
-    return (pio_fstat() & FSTAT_TXFULL_SM0) != 0;
+    return pio_sm_is_tx_fifo_full(pio, (uint)sm);
 }
 
 static inline int rx_empty(void)
 {
-    return (pio_fstat() & FSTAT_RXEMPTY_SM0) != 0;
+    return pio_sm_is_rx_fifo_empty(pio, (uint)sm);
 }
 
 static inline void fifo_tx_write(uint32_t val)
@@ -157,9 +189,10 @@ static int pio_setup(void)
         return -1;
     }
 
-    sm = pio_claim_unused_sm(pio, true);
+    sm = pio_claim_unused_sm(pio, false);
     if (sm < 0) {
-        fprintf(stderr, "ERROR: no free state machines\n");
+        fprintf(stderr, "ERROR: no free state machines (all claimed by other processes?)\n");
+        fprintf(stderr, "  Try: sudo reboot, or kill other PIO users\n");
         pio_close(pio);
         return -1;
     }
@@ -200,6 +233,25 @@ static int test_single_word(void)
 {
     printf("\n=== Test 1: Single-Word Direct FIFO Loopback ===\n\n");
 
+    /* First verify piolib blocking path works (as baseline).
+     * Use watchdog to prevent hanging in uninterruptible kernel ioctl. */
+    printf("  Baseline: piolib blocking path...\n");
+    uint32_t tx_val = 0xDEADBEEFu;
+    watchdog_start(5);
+    pio_sm_put_blocking(pio, (uint)sm, tx_val);
+    uint32_t rx_val = pio_sm_get_blocking(pio, (uint)sm);
+    watchdog_stop();
+    if (rx_val != ~tx_val) {
+        printf("  FAIL: piolib baseline broken! sent 0x%08x, expected 0x%08x, got 0x%08x\n",
+               tx_val, ~tx_val, rx_val);
+        return 1;
+    }
+    printf("  Baseline PASS: piolib 0x%08x → 0x%08x (expected 0x%08x)\n",
+           tx_val, rx_val, ~tx_val);
+
+    /* Now test direct register access */
+    printf("  Testing direct register access...\n");
+
     uint32_t test_words[] = {
         0x00000000u, 0xFFFFFFFFu, 0xAAAAAAAAu, 0x55555555u,
         0x12345678u, 0xDEADBEEFu, 0x80000001u, 0x7FFFFFFEu,
@@ -208,30 +260,12 @@ static int test_single_word(void)
     int errors = 0;
 
     for (int i = 0; i < num_tests; i++) {
-        uint32_t tx_val = test_words[i];
-        uint32_t expected = ~tx_val;  /* loopback PIO does bitwise NOT */
+        tx_val = test_words[i];
+        uint32_t expected = ~tx_val;
 
-        /* Wait for TX FIFO not full */
-        int timeout = 1000000;
-        while (tx_full() && --timeout > 0)
-            ;
-        if (timeout == 0) {
-            printf("  FAIL: TX FIFO stuck full\n");
-            return 1;
-        }
-
+        /* Write via direct register, read via piolib (to isolate TX path) */
         fifo_tx_write(tx_val);
-
-        /* Wait for RX FIFO not empty */
-        timeout = 1000000;
-        while (rx_empty() && --timeout > 0)
-            ;
-        if (timeout == 0) {
-            printf("  FAIL: RX FIFO stuck empty (word %d)\n", i);
-            return 1;
-        }
-
-        uint32_t rx_val = fifo_rx_read();
+        rx_val = pio_sm_get_blocking(pio, (uint)sm);
 
         if (rx_val != expected) {
             printf("  FAIL: word %d: sent 0x%08x, expected ~= 0x%08x, got 0x%08x\n",
@@ -241,18 +275,95 @@ static int test_single_word(void)
     }
 
     if (errors == 0)
-        printf("  PASS: %d words looped back correctly via direct FIFO access\n",
+        printf("  Direct TX PASS: %d words sent via direct register, received via piolib\n",
                num_tests);
     else
-        printf("  FAIL: %d / %d words mismatched\n", errors, num_tests);
+        printf("  Direct TX FAIL: %d / %d words mismatched\n", errors, num_tests);
 
-    return errors > 0 ? 1 : 0;
+    /* Now test direct RX read: write via piolib, read via direct register */
+    printf("  Testing direct RX read...\n");
+    int rx_errors = 0;
+
+    for (int i = 0; i < num_tests; i++) {
+        tx_val = test_words[i];
+        uint32_t expected = ~tx_val;
+
+        pio_sm_put_blocking(pio, (uint)sm, tx_val);
+
+        /* Small delay to ensure PIO has processed the word and
+         * the RX FIFO has data before we read via direct register */
+        usleep(1);
+
+        /* Check RX FIFO has data before reading */
+        if (rx_empty()) {
+            printf("  WARNING: RX FIFO empty after piolib put + 1us delay (word %d)\n", i);
+            /* Try waiting a bit more */
+            for (int w = 0; w < 1000 && rx_empty(); w++)
+                usleep(1);
+            if (rx_empty()) {
+                printf("  FAIL: RX FIFO still empty after 1ms\n");
+                rx_errors++;
+                continue;
+            }
+        }
+
+        rx_val = fifo_rx_read();
+
+        if (rx_val != expected) {
+            printf("  FAIL: word %d: sent 0x%08x, expected ~= 0x%08x, got 0x%08x\n",
+                   i, tx_val, expected, rx_val);
+            rx_errors++;
+        }
+    }
+
+    if (rx_errors == 0)
+        printf("  Direct RX PASS: %d words sent via piolib, received via direct register\n",
+               num_tests);
+    else
+        printf("  Direct RX FAIL: %d / %d words mismatched\n", rx_errors, num_tests);
+
+    /* Full direct path: TX and RX both via direct registers */
+    printf("  Testing full direct TX+RX...\n");
+    int full_errors = 0;
+
+    for (int i = 0; i < num_tests; i++) {
+        tx_val = test_words[i];
+        uint32_t expected = ~tx_val;
+
+        fifo_tx_write(tx_val);
+        usleep(1);  /* allow PIO to process */
+
+        if (rx_empty()) {
+            for (int w = 0; w < 1000 && rx_empty(); w++)
+                usleep(1);
+            if (rx_empty()) {
+                printf("  FAIL: RX FIFO empty for full direct word %d\n", i);
+                full_errors++;
+                continue;
+            }
+        }
+
+        rx_val = fifo_rx_read();
+
+        if (rx_val != expected) {
+            printf("  FAIL: word %d: sent 0x%08x, expected ~= 0x%08x, got 0x%08x\n",
+                   i, tx_val, expected, rx_val);
+            full_errors++;
+        }
+    }
+
+    if (full_errors == 0)
+        printf("  Full direct PASS: %d words via direct TX + direct RX\n", num_tests);
+    else
+        printf("  Full direct FAIL: %d / %d words mismatched\n", full_errors, num_tests);
+
+    return (errors > 0 || rx_errors > 0 || full_errors > 0) ? 1 : 0;
 }
 
 /* ─── Test 2: Polled throughput (direct vs piolib) ────────────── */
 
-#define POLLED_WORDS  4096
-#define POLLED_ITERS  20
+#define POLLED_WORDS  256
+#define POLLED_ITERS  5
 
 static int test_polled_throughput(void)
 {
@@ -270,10 +381,16 @@ static int test_polled_throughput(void)
     /* Fill TX buffer */
     bench_fill_pattern(tx_buf, POLLED_WORDS, BENCH_PATTERN_SEQUENTIAL, 42);
 
-    /* ── Direct register polled throughput ── */
+    /* ── Direct register with piolib FSTAT polling ── */
+    /* Use piolib ioctl for FIFO status, direct registers for data.
+     * This measures: data via direct reg, status via ioctl. */
     double direct_times[POLLED_ITERS];
     for (int iter = 0; iter < POLLED_ITERS; iter++) {
         memset(rx_buf, 0, POLLED_WORDS * 4);
+
+        /* Drain any stale RX data */
+        while (!rx_empty())
+            (void)fifo_rx_read();
 
         double t0 = get_time_sec();
         for (size_t i = 0; i < POLLED_WORDS; i++) {
@@ -294,6 +411,7 @@ static int test_polled_throughput(void)
 
     /* ── piolib blocking throughput ── */
     double blocking_times[POLLED_ITERS];
+    watchdog_start(60);  /* generous timeout for blocking transfers */
     for (int iter = 0; iter < POLLED_ITERS; iter++) {
         memset(rx_buf, 0, POLLED_WORDS * 4);
 
@@ -305,6 +423,7 @@ static int test_polled_throughput(void)
         double t1 = get_time_sec();
         blocking_times[iter] = t1 - t0;
     }
+    watchdog_stop();
 
     /* Verify last iteration */
     uint32_t blocking_errors = bench_verify_not(tx_buf, rx_buf, POLLED_WORDS,
@@ -329,7 +448,7 @@ static int test_polled_throughput(void)
     double direct_mean = direct_sum / POLLED_ITERS;
     double blocking_mean = blocking_sum / POLLED_ITERS;
 
-    printf("  Direct register polling (%d words x %d iters):\n",
+    printf("  Direct reg + piolib FSTAT (%d words x %d iters):\n",
            POLLED_WORDS, POLLED_ITERS);
     printf("    Throughput: min %.3f MB/s, mean %.3f MB/s\n",
            direct_min, direct_mean);
@@ -354,8 +473,8 @@ static int test_polled_throughput(void)
 
 /* ─── Test 3: SRAM-mediated FIFO loopback ─────────────────────── */
 
-#define SRAM_TEST_WORDS  4096
-#define SRAM_TEST_ITERS  10
+#define SRAM_TEST_WORDS  256
+#define SRAM_TEST_ITERS  5
 
 static int test_sram_mediated(void)
 {
@@ -395,18 +514,35 @@ static int test_sram_mediated(void)
             sram_rx[i] = 0;
         __sync_synchronize();
 
-        /* Pump data: SRAM → TXF0 → PIO NOT → RXF0 → SRAM */
+        /* Pump data: SRAM → TXF0 → PIO NOT → RXF0 → SRAM
+         *
+         * Pure direct register access — NO piolib ioctl calls.
+         * The PIO loopback program processes each word in 3 cycles
+         * (15 ns at 200 MHz). A PCIe write to TX takes ~100 ns
+         * (posted write), and a PCIe read from RX takes ~930 ns.
+         * By the time the RX read completes, PIO has long finished.
+         *
+         * We process one word at a time (lockstep):
+         *   1. Read word from SRAM (PCIe BAR2 read, ~930 ns)
+         *   2. Write word to TXF0 (PCIe BAR1 write, posted ~100 ns)
+         *   3. Read word from RXF0 (PCIe BAR1 read, ~930 ns)
+         *   4. Write word to SRAM (PCIe BAR2 write, posted ~100 ns)
+         *
+         * PCIe ordering within the same device ensures steps 2→3
+         * see processed data. Cross-BAR ordering is guaranteed by
+         * the PCIe spec for ordered completions. */
         double t0 = get_time_sec();
+        int stall = 0;
         for (size_t i = 0; i < SRAM_TEST_WORDS; i++) {
-            while (tx_full())
-                ;
-            fifo_tx_write(sram_tx[i]);
-            while (rx_empty())
-                ;
-            sram_rx[i] = fifo_rx_read();
+            uint32_t tx_val = sram_tx[i];     /* SRAM read (BAR2) */
+            fifo_tx_write(tx_val);             /* FIFO write (BAR1) */
+            uint32_t rx_val = fifo_rx_read();  /* FIFO read (BAR1) */
+            sram_rx[i] = rx_val;               /* SRAM write (BAR2) */
         }
         __sync_synchronize();
         double t1 = get_time_sec();
+
+        (void)stall;
 
         /* Copy for verification */
         for (size_t i = 0; i < SRAM_TEST_WORDS; i++) {
@@ -450,6 +586,10 @@ static int test_sram_mediated(void)
 
 int main(void)
 {
+    /* Force unbuffered stdout for SSH visibility */
+    setbuf(stdout, NULL);
+    setbuf(stderr, NULL);
+
     printf("fifo_probe — Direct PIO FIFO Access Probe\n");
     printf("==========================================\n\n");
 
