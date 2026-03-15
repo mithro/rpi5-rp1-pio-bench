@@ -1,10 +1,11 @@
 # sram-benchmark/Makefile — SRAM + cyclic DMA benchmark tools
 #
 # Targets:
-#   all           Build all probe tools (requires RPi5 + libpio-dev)
-#   sram_probe    SRAM access verification and bandwidth measurement
-#   fifo_probe    Direct PIO FIFO access via /dev/mem
-#   clean         Remove build artifacts
+#   all            Build all probe tools (requires RPi5 + libpio-dev)
+#   sram_probe     SRAM access verification and bandwidth measurement
+#   fifo_probe     Direct PIO FIFO access via /dev/mem
+#   sram_dma_bench SRAM cyclic DMA throughput benchmark
+#   clean          Remove build artifacts
 
 CC       ?= gcc
 CFLAGS   := -Wall -Wextra -Werror -O2 -std=c11
@@ -22,7 +23,7 @@ IS_RPI5 := $(shell test -e /dev/pio0 && echo yes || echo no)
 
 # ─── Default target ─────────────────────────────────────────
 .PHONY: all
-all: sram_probe fifo_probe
+all: sram_probe fifo_probe sram_dma_bench
 
 # ─── Target: sram_probe (requires /dev/mem access) ──────────
 sram_probe: sram_probe.c
@@ -51,7 +52,19 @@ else
 	@false
 endif
 
+# ─── Target: sram_dma_bench (requires rp1_pio_sram.ko) ──────
+sram_dma_bench: sram_dma_bench.c ../benchmark/loopback.pio.h
+ifeq ($(FORCE_BUILD),1)
+	$(CC) $(BENCH_CFLAGS) -o $@ sram_dma_bench.c -lpio -lm
+else ifeq ($(IS_RPI5),yes)
+	$(CC) $(BENCH_CFLAGS) -o $@ sram_dma_bench.c -lpio -lm
+else
+	@echo "ERROR: sram_dma_bench requires RPi5 with /dev/pio0 and libpio-dev"
+	@echo "Use FORCE_BUILD=1 to override."
+	@false
+endif
+
 # ─── Target: clean ──────────────────────────────────────────
 .PHONY: clean
 clean:
-	rm -f sram_probe fifo_probe
+	rm -f sram_probe fifo_probe sram_dma_bench
