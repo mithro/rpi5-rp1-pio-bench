@@ -582,6 +582,23 @@ static int test_sram_mediated(void)
     return total_errors > 0 ? 1 : 0;
 }
 
+/* ─── Signal handler for clean shutdown ───────────────────────── */
+
+static volatile sig_atomic_t g_cleanup_needed = 0;
+
+static void cleanup_handler(int sig)
+{
+    (void)sig;
+    /* Try to clean up PIO state before exit */
+    if (g_cleanup_needed && sm >= 0) {
+        pio_sm_set_enabled(pio, (uint)sm, false);
+        pio_remove_program(pio, &loopback_program, offset);
+        pio_sm_unclaim(pio, (uint)sm);
+        pio_close(pio);
+    }
+    _exit(2);
+}
+
 /* ─── Main ────────────────────────────────────────────────────── */
 
 int main(void)
@@ -589,6 +606,13 @@ int main(void)
     /* Force unbuffered stdout for SSH visibility */
     setbuf(stdout, NULL);
     setbuf(stderr, NULL);
+
+    /* Install signal handlers for clean shutdown */
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = cleanup_handler;
+    sigaction(SIGTERM, &sa, NULL);
+    sigaction(SIGINT, &sa, NULL);
 
     printf("fifo_probe — Direct PIO FIFO Access Probe\n");
     printf("==========================================\n\n");
@@ -606,6 +630,7 @@ int main(void)
         devmem_cleanup();
         return 1;
     }
+    g_cleanup_needed = 1;
 
     /* Step 3: Run tests */
     int ret = 0;
@@ -620,6 +645,7 @@ int main(void)
     else
         printf("RESULT: SOME TESTS FAILED\n");
 
+    g_cleanup_needed = 0;
     pio_teardown();
     devmem_cleanup();
     return ret;
