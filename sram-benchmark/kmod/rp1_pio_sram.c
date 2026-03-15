@@ -43,10 +43,10 @@
 /* DMA ring buffer layout (in a single 16 KB coherent allocation) */
 #define DMA_BUF_SIZE       16384          /* 16 KB = 1 ARM64 page */
 #define TX_RING_OFFSET     0             /* TX ring starts at offset 0 */
-#define TX_RING_SIZE       8192          /* 8 KB = 8 periods × 1 KB */
+#define TX_RING_SIZE       8192          /* 8 KB = 2 periods × 4 KB */
 #define RX_RING_OFFSET     8192          /* RX ring at offset 8 KB */
-#define RX_RING_SIZE       8192          /* 8 KB = 8 periods × 1 KB */
-#define DMA_PERIOD_SIZE    1024          /* 1 KB per DMA period */
+#define RX_RING_SIZE       8192          /* 8 KB = 2 periods × 4 KB */
+#define DMA_PERIOD_SIZE    4096          /* 4 KB per DMA period (match standard driver) */
 
 /* PIO FIFO physical addresses (BCM2712 / CPU perspective) */
 #define PIO_PHYS_BASE      0x1F00178000ULL
@@ -88,8 +88,10 @@ struct sram_dma_status {
 	__u64 rx_bytes;
 };
 
-/* RP1 PIO DMACTRL default value (from rp1-pio driver) */
-#define RP1_PIO_DMACTRL_DEFAULT		0x80000104
+/* RP1 PIO DMACTRL value: DREQ_EN (bit 31) + threshold=8 for heavy channels.
+ * PR #7190 requires threshold = burst size to prevent data corruption.
+ * Heavy channels (0, 1) support MSIZE=8 (8-beat AXI bursts = 32 bytes). */
+#define RP1_PIO_DMACTRL_DEFAULT		0x80000108
 
 /* Module state */
 static struct device *pio_dev;
@@ -237,7 +239,7 @@ static int start_cyclic_dma(void)
 	tx_cfg.direction = DMA_MEM_TO_DEV;
 	tx_cfg.dst_addr = PIO_FIFO_TX0;
 	tx_cfg.dst_addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
-	tx_cfg.dst_maxburst = 4;
+	tx_cfg.dst_maxburst = 8;	/* heavy channels support MSIZE=8 */
 	tx_cfg.src_addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
 
 	ret = dmaengine_slave_config(tx_chan, &tx_cfg);
@@ -250,7 +252,7 @@ static int start_cyclic_dma(void)
 	rx_cfg.direction = DMA_DEV_TO_MEM;
 	rx_cfg.src_addr = PIO_FIFO_RX0;
 	rx_cfg.src_addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
-	rx_cfg.src_maxburst = 1;
+	rx_cfg.src_maxburst = 8;	/* heavy channels support MSIZE=8 */
 	rx_cfg.dst_addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
 
 	ret = dmaengine_slave_config(rx_chan, &rx_cfg);
@@ -281,8 +283,8 @@ static int start_cyclic_dma(void)
 		return ret;
 	}
 
-	ret = pio_sm_set_dmactrl(pio_client, 0, false,
-				 (RP1_PIO_DMACTRL_DEFAULT & ~0x1f) | 1);
+	/* RX DMACTRL: same threshold as TX (must match burst size per PR #7190) */
+	ret = pio_sm_set_dmactrl(pio_client, 0, false, RP1_PIO_DMACTRL_DEFAULT);
 	if (ret) {
 		pr_err("rp1_pio_sram: RX dmactrl failed: %d\n", ret);
 		return ret;
@@ -410,7 +412,7 @@ static int start_sram_dma(void)
 	tx_cfg.direction = DMA_MEM_TO_DEV;
 	tx_cfg.dst_addr = PIO_FIFO_TX0;
 	tx_cfg.dst_addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
-	tx_cfg.dst_maxburst = 4;
+	tx_cfg.dst_maxburst = 8;	/* heavy channels support MSIZE=8 */
 	tx_cfg.src_addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
 
 	ret = dmaengine_slave_config(tx_chan, &tx_cfg);
@@ -423,7 +425,7 @@ static int start_sram_dma(void)
 	rx_cfg.direction = DMA_DEV_TO_MEM;
 	rx_cfg.src_addr = PIO_FIFO_RX0;
 	rx_cfg.src_addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
-	rx_cfg.src_maxburst = 1;
+	rx_cfg.src_maxburst = 8;	/* heavy channels support MSIZE=8 */
 	rx_cfg.dst_addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
 
 	ret = dmaengine_slave_config(rx_chan, &rx_cfg);
@@ -455,8 +457,8 @@ static int start_sram_dma(void)
 		goto err_unmap;
 	}
 
-	ret = pio_sm_set_dmactrl(pio_client, 0, false,
-				 (RP1_PIO_DMACTRL_DEFAULT & ~0x1f) | 1);
+	/* RX DMACTRL: same threshold as TX (must match burst size per PR #7190) */
+	ret = pio_sm_set_dmactrl(pio_client, 0, false, RP1_PIO_DMACTRL_DEFAULT);
 	if (ret) {
 		pr_err("rp1_pio_sram: RX dmactrl failed: %d\n", ret);
 		goto err_unmap;
@@ -563,14 +565,14 @@ static int dma_diag_test(void)
 	tx_cfg.direction = DMA_MEM_TO_DEV;
 	tx_cfg.dst_addr = PIO_FIFO_TX0;
 	tx_cfg.dst_addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
-	tx_cfg.dst_maxburst = 4;
+	tx_cfg.dst_maxburst = 8;
 	tx_cfg.src_addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
 	dmaengine_slave_config(tx_chan, &tx_cfg);
 
 	rx_cfg.direction = DMA_DEV_TO_MEM;
 	rx_cfg.src_addr = PIO_FIFO_RX0;
 	rx_cfg.src_addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
-	rx_cfg.src_maxburst = 1;
+	rx_cfg.src_maxburst = 8;
 	rx_cfg.dst_addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
 	dmaengine_slave_config(rx_chan, &rx_cfg);
 
@@ -584,8 +586,7 @@ static int dma_diag_test(void)
 		}
 	}
 	pio_sm_set_dmactrl(pio_client, 0, true, RP1_PIO_DMACTRL_DEFAULT);
-	pio_sm_set_dmactrl(pio_client, 0, false,
-			   (RP1_PIO_DMACTRL_DEFAULT & ~0x1f) | 1);
+	pio_sm_set_dmactrl(pio_client, 0, false, RP1_PIO_DMACTRL_DEFAULT);
 
 	/* Prepare cyclic DMA */
 	diag_tx_desc = dmaengine_prep_dma_cyclic(tx_chan, tx_dma,
@@ -720,14 +721,14 @@ static int sram_addr_probe(u64 test_addr)
 	tx_cfg.direction = DMA_MEM_TO_DEV;
 	tx_cfg.dst_addr = PIO_FIFO_TX0;
 	tx_cfg.dst_addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
-	tx_cfg.dst_maxburst = 4;
+	tx_cfg.dst_maxburst = 8;
 	tx_cfg.src_addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
 	dmaengine_slave_config(tx_chan, &tx_cfg);
 
 	rx_cfg.direction = DMA_DEV_TO_MEM;
 	rx_cfg.src_addr = PIO_FIFO_RX0;
 	rx_cfg.src_addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
-	rx_cfg.src_maxburst = 1;
+	rx_cfg.src_maxburst = 8;
 	rx_cfg.dst_addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
 	dmaengine_slave_config(rx_chan, &rx_cfg);
 
@@ -741,8 +742,7 @@ static int sram_addr_probe(u64 test_addr)
 		}
 	}
 	pio_sm_set_dmactrl(pio_client, 0, true, RP1_PIO_DMACTRL_DEFAULT);
-	pio_sm_set_dmactrl(pio_client, 0, false,
-			   (RP1_PIO_DMACTRL_DEFAULT & ~0x1f) | 1);
+	pio_sm_set_dmactrl(pio_client, 0, false, RP1_PIO_DMACTRL_DEFAULT);
 
 	pr_info("rp1_pio_sram: PROBE: TX src=0x%llx RX dst=0x%llx (%s)\n",
 		(u64)tx_dma, (u64)rx_dma,
