@@ -130,13 +130,16 @@ but overwriting it may affect firmware diagnostics or statistics.
 
 ### Implications for SRAM Usage
 
-**SRAM cannot be used as DMA source/destination** — the RP1 DMA controller
-operates on the AXI bus and cannot reach M3 TCM memory.
+**SRAM CAN be used as DMA source/destination** at DMA address `0xc020000000`.
+The RP1 DMA controller reaches M3 TCM via the `0xc0` internal bus prefix.
+However, SRAM DMA does not improve throughput over host DRAM DMA because
+the APB→PIO FIFO handshake is the bottleneck, not memory access latency.
 
-SRAM *can* be used as:
-1. **M3 Core 1 data buffers** — single-cycle access from Cortex-M3 cores
-2. **Host CPU data staging** — accessible via PCIe BAR2 mmap
-3. **Shared memory IPC** — between host CPU and M3 Core 1
+SRAM can be used as:
+1. **DMA ring buffers** — accessible at `0xc020000000` + offset (verified)
+2. **M3 Core 1 data buffers** — single-cycle access from Cortex-M3 cores
+3. **Host CPU data staging** — accessible via PCIe BAR2 mmap
+4. **Shared memory IPC** — between host CPU and M3 Core 1
 
 For Phase 4 (M3 Core 1 bridge), SRAM serves as the shared ring buffer between
 host CPU and Core 1's tight FIFO polling loop. Available safe regions:
@@ -209,21 +212,39 @@ Host CPU ←─read──── DRAM buffer
 
 ### Phase 3: Cyclic DMA (~9.1 MB/s achieved)
 
-**STATUS: SRAM DMA IMPOSSIBLE.** RP1 shared SRAM is M3 Tightly Coupled Memory
-(TCM), not on the AXI bus. The RP1 DMA controller cannot access SRAM at any
-address. Tested addresses: `0x20000000` (M3 TCM), `0x40400000` (RP1 child bus),
-`0xc040400000` (full 40-bit from dma-ranges entry 2). All result in DMA callbacks
-firing but writes silently dropped to unmapped AXI space.
+**SRAM DMA ADDRESS FOUND:** The RP1 DMA controller CAN access shared SRAM at
+DMA address **`0xc020000000`** — the M3 TCM address (`0x20000000`) with the
+`0xc0` RP1 internal bus prefix. Verified with sram_addr_probe: writing a known
+pattern to SRAM via BAR2, then DMA reading from `0xc020008B00` through PIO
+loopback (NOT), produces the expected bitwise-NOT pattern in the RX buffer.
+1024/1024 words matched perfectly.
 
-Evidence:
-- `dma_map_resource()` returns the CPU physical address unchanged (identity
-  mapping) — SRAM falls outside all valid dma-ranges entries
-- dma-ranges entry 2 (`0xc040000000`, 4 MB) covers RP1 peripheral space but
-  routes through PCIe, not to TCM
-- SRAM is only accessible via M3 core (TCM bus) and PCIe BAR2 (host CPU)
+**However, SRAM DMA does NOT improve throughput over host DRAM DMA:**
 
-**Fallback implementation** uses `dma_alloc_coherent` host DRAM ring buffers
-with cyclic DMA, achieving **9.1 MB/s** per channel with 0 data errors:
+| Mode | Throughput | Data Path |
+|------|-----------|-----------|
+| DRAM (host, via PCIe) | **9.28 MB/s** | Host DRAM → PCIe → DMA → APB → PIO |
+| SRAM (RP1-internal) | **8.84 MB/s** | SRAM → DMA → APB → PIO |
+
+The bottleneck is the DMA→APB→PIO FIFO handshake (~70 bus cycles per word),
+not the memory source. SRAM eliminates the PCIe round-trip for data fetches,
+but the APB bridge to PIO FIFOs dominates the transfer time.
+
+**SRAM DMA address probe results:**
+
+| DMA Address | Source | Result |
+|-------------|--------|--------|
+| `0xc0401c0000` | RP1_RAM_BASE+0xc040 | TX=1 RX=0 (stall) |
+| `0xc040400000` | DT sram@400000 | Garbage (0xFFFFFFF0) |
+| `0x401c0000` | RP1_RAM_BASE raw | Garbage (0x21522152) |
+| `0x40400000` | BAR2 offset raw | Garbage (0x21522152) |
+| `0x20000000` | M3 TCM raw | Garbage (0x21522152) |
+| **`0xc020000000`** | **M3 TCM + 0xc0 prefix** | **PERFECT MATCH** |
+| `0x1f00400000` | CPU phys BAR2 | All 0xFFFFFFFF |
+
+**Implementation** uses both host DRAM and SRAM ring buffers with cyclic DMA.
+DRAM mode achieves **9.28 MB/s**, SRAM mode achieves **8.84 MB/s**, both with
+0 data errors:
 
 ```
 Host CPU ──PCIe──→ Host DRAM ring buffer (dma_alloc_coherent, 16 KB)
