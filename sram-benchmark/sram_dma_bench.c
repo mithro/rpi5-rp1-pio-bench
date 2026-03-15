@@ -39,6 +39,7 @@
 #define SRAM_IOC_STOP_DMA  _IO(SRAM_IOC_MAGIC, 2)
 #define SRAM_IOC_DMA_STATUS _IOR(SRAM_IOC_MAGIC, 3, struct sram_dma_status)
 #define SRAM_IOC_DMA_DIAG  _IO(SRAM_IOC_MAGIC, 4)
+#define SRAM_IOC_START_SRAM_DMA _IO(SRAM_IOC_MAGIC, 6)
 
 struct sram_dma_status {
 	uint32_t tx_ring_offset;
@@ -308,20 +309,84 @@ static int test_dma_loopback(double duration_sec)
 	return (errors == 0 && st.tx_bytes > 0) ? 0 : 1;
 }
 
+/* ─── Test: SRAM DMA loopback ────────────────────────────────── */
+
+static int test_sram_loopback(double duration_sec)
+{
+	struct sram_dma_status st;
+	int ret;
+
+	printf("\n=== SRAM Cyclic DMA PIO Loopback Test ===\n\n");
+	printf("  Data path: SRAM → DMA → PIO TXF → PIO(NOT) → PIO RXF → DMA → SRAM\n");
+	printf("  (No PCIe round-trip per DMA burst — RP1-internal only)\n\n");
+
+	/* Start SRAM DMA (kernel fills TX ring, clears RX ring internally) */
+	printf("  Starting SRAM cyclic DMA...\n");
+	ret = ioctl(dev_fd, SRAM_IOC_START_SRAM_DMA);
+	if (ret < 0) {
+		fprintf(stderr, "ERROR: START_SRAM_DMA failed: %s\n", strerror(errno));
+		return -1;
+	}
+
+	/* Let DMA run */
+	double t0 = get_time_sec();
+	printf("  DMA running for %.1f seconds...\n", duration_sec);
+	usleep((unsigned)(duration_sec * 1e6));
+	double t1 = get_time_sec();
+	double elapsed = t1 - t0;
+
+	/* Stop DMA and get status */
+	ioctl(dev_fd, SRAM_IOC_STOP_DMA);
+
+	ret = ioctl(dev_fd, SRAM_IOC_DMA_STATUS, &st);
+	if (ret < 0) {
+		fprintf(stderr, "ERROR: DMA_STATUS ioctl failed after stop: %s\n",
+			strerror(errno));
+		return -1;
+	}
+
+	printf("\n  Results:\n");
+	printf("    Mode:        SRAM (RP1-internal DMA)\n");
+	printf("    Duration:    %.3f seconds\n", elapsed);
+	printf("    TX bytes:    %lu (%lu periods)\n",
+	       (unsigned long)st.tx_bytes, (unsigned long)(st.tx_bytes / st.period_size));
+	printf("    RX bytes:    %lu (%lu periods)\n",
+	       (unsigned long)st.rx_bytes, (unsigned long)(st.rx_bytes / st.period_size));
+
+	if (st.tx_bytes > 0) {
+		double tx_bw = (double)st.tx_bytes / elapsed / (1024.0 * 1024.0);
+		printf("    TX throughput: %.2f MB/s\n", tx_bw);
+	}
+	if (st.rx_bytes > 0) {
+		double rx_bw = (double)st.rx_bytes / elapsed / (1024.0 * 1024.0);
+		printf("    RX throughput: %.2f MB/s\n", rx_bw);
+	}
+
+	printf("\n  (Data verification: check dmesg for SRAM RX content)\n\n");
+
+	return (st.tx_bytes > 0 && st.rx_bytes > 0) ? 0 : 1;
+}
+
 /* ─── Main ────────────────────────────────────────────────────── */
 
 int main(int argc, char *argv[])
 {
 	double duration = 2.0;
+	int use_sram = 0;
 
-	if (argc >= 2)
-		duration = atof(argv[1]);
+	for (int i = 1; i < argc; i++) {
+		if (strcmp(argv[i], "--sram") == 0)
+			use_sram = 1;
+		else
+			duration = atof(argv[i]);
+	}
 
 	setbuf(stdout, NULL);
 	setbuf(stderr, NULL);
 
 	printf("sram_dma_bench — Cyclic DMA PIO Loopback Benchmark\n");
-	printf("===================================================\n\n");
+	printf("===================================================\n");
+	printf("Mode: %s\n\n", use_sram ? "SRAM (RP1-internal)" : "DRAM (host, via PCIe)");
 
 	/* Step 1: Set up PIO loopback */
 	printf("Step 1: Setting up PIO loopback...\n");
@@ -335,18 +400,22 @@ int main(int argc, char *argv[])
 		return 1;
 	}
 
-	/* Step 3: Run DMA diagnostic (quick self-test) */
-	printf("Step 3: Running DMA diagnostic...\n");
-	{
-		int diag_ret = ioctl(dev_fd, SRAM_IOC_DMA_DIAG);
-		if (diag_ret < 0)
-			printf("  DIAG: FAILED (%s) — check dmesg\n", strerror(errno));
-		else
-			printf("  DIAG: PASSED — cyclic DMA loopback verified\n");
+	int ret;
+	if (use_sram) {
+		/* SRAM mode: skip DRAM diag, go straight to SRAM test */
+		ret = test_sram_loopback(duration);
+	} else {
+		/* DRAM mode: run diagnostic then throughput test */
+		printf("Step 3: Running DMA diagnostic...\n");
+		{
+			int diag_ret = ioctl(dev_fd, SRAM_IOC_DMA_DIAG);
+			if (diag_ret < 0)
+				printf("  DIAG: FAILED (%s) — check dmesg\n", strerror(errno));
+			else
+				printf("  DIAG: PASSED — cyclic DMA loopback verified\n");
+		}
+		ret = test_dma_loopback(duration);
 	}
-
-	/* Step 4: Run DMA loopback throughput test */
-	int ret = test_dma_loopback(duration);
 
 	/* Cleanup */
 	device_cleanup();
