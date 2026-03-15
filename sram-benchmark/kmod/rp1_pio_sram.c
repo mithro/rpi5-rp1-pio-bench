@@ -439,6 +439,11 @@ static int dma_diag_test(void)
 	dmaengine_terminate_sync(tx_chan);
 	dmaengine_terminate_sync(rx_chan);
 
+	/* Clear PIO FIFOs after diagnostic to avoid stale data
+	 * affecting the next DMA session */
+	if (pio_client)
+		pio_sm_clear_fifos(pio_client, 0);
+
 	/* Check results */
 	errors = 0;
 	for (i = 0; i < DIAG_BUF_SIZE / 4; i++) {

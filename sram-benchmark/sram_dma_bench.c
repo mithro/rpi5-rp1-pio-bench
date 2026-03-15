@@ -242,17 +242,44 @@ static int test_dma_loopback(double duration_sec)
 		printf("    RX throughput: %.2f MB/s\n", rx_bw);
 	}
 
-	/* Verify RX data: should be bitwise NOT of TX pattern */
+	/* Verify RX data: should be bitwise NOT of TX pattern.
+	 * Cyclic DMA wraps around continuously, so the RX ring contents
+	 * are a phase-shifted version of ~TX. Detect the phase from RX[0]
+	 * then verify all words match the shifted pattern. */
 	printf("\n  Verifying RX data...\n");
 	__sync_synchronize();
+	unsigned check_words = tx_words < rx_words ? tx_words : rx_words;
+
+	/* Detect phase: RX[0] = ~TX[phase] = ~(0xA0000000 | phase) */
+	uint32_t rx0 = rx_ring[0];
+	uint32_t inv_rx0 = ~rx0;
+	unsigned phase = 0;
+	int phase_valid = 0;
+
+	if ((inv_rx0 & 0xF0000000u) == 0xA0000000u) {
+		phase = inv_rx0 & 0x0FFFFFFFu;
+		if (phase < tx_words)
+			phase_valid = 1;
+	}
+
+	if (!phase_valid && rx0 == 0xDEADDEADu) {
+		printf("    FAIL: RX ring unchanged (0xDEADDEAD) — no data received\n");
+		printf("\n");
+		return 1;
+	}
+
+	if (!phase_valid) {
+		printf("    FAIL: RX[0]=0x%08x doesn't match expected pattern\n", rx0);
+		printf("\n");
+		return 1;
+	}
+
 	unsigned errors = 0;
 	unsigned first_err_idx = 0;
 	uint32_t first_expected = 0, first_actual = 0;
 
-	/* Check the first min(tx_words, rx_words) entries */
-	unsigned check_words = tx_words < rx_words ? tx_words : rx_words;
 	for (unsigned i = 0; i < check_words; i++) {
-		uint32_t expected = ~(0xA0000000u | (i % tx_words));
+		uint32_t expected = ~(0xA0000000u | ((i + phase) % tx_words));
 		uint32_t actual = rx_ring[i];
 		if (actual != expected) {
 			if (errors == 0) {
@@ -265,16 +292,16 @@ static int test_dma_loopback(double duration_sec)
 	}
 
 	if (errors == 0) {
-		printf("    PASS: %u words verified (bitwise NOT matches)\n", check_words);
+		printf("    PASS: %u words verified (phase=%u, bitwise NOT matches)\n",
+		       check_words, phase);
 	} else {
-		printf("    FAIL: %u/%u words mismatched\n", errors, check_words);
+		printf("    FAIL: %u/%u words mismatched (phase=%u)\n",
+		       errors, check_words, phase);
 		printf("    First mismatch at word %u: expected 0x%08x, got 0x%08x\n",
 		       first_err_idx, first_expected, first_actual);
-		/* Show first few RX words for debugging */
 		printf("    First 8 RX words:\n");
 		for (unsigned i = 0; i < 8 && i < rx_words; i++)
-			printf("      [%u] = 0x%08x (expected 0x%08x)\n",
-			       i, rx_ring[i], ~(0xA0000000u | i));
+			printf("      [%u] = 0x%08x\n", i, rx_ring[i]);
 	}
 
 	printf("\n");
