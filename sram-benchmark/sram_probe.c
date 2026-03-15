@@ -173,11 +173,11 @@ static int test_write_readback(void)
         }
 
         if (errors == 0) {
-            printf("  %-14s  PASS  (%zu words verified)\n",
-                   pat->name, SRAM_SAFE_WORDS);
+            printf("  %-14s  PASS  (%u words verified)\n",
+                   pat->name, (unsigned)SRAM_SAFE_WORDS);
         } else {
-            printf("  %-14s  FAIL  %u errors / %zu words\n",
-                   pat->name, errors, SRAM_SAFE_WORDS);
+            printf("  %-14s  FAIL  %u errors / %u words\n",
+                   pat->name, errors, (unsigned)SRAM_SAFE_WORDS);
             printf("    first mismatch at word %zu: expected 0x%08x, got 0x%08x\n",
                    first_mismatch, first_expected, first_actual);
             all_pass = 0;
@@ -283,55 +283,6 @@ static int test_bandwidth(void)
 
     printf("\n");
     return 0;
-}
-
-/* ─── Test: Firmware region safety ────────────────────────────── */
-
-static int test_firmware_safety(void)
-{
-    printf("=== Firmware Region Safety Check ===\n\n");
-
-    volatile uint32_t *fw = sram_base + (FW_REGION_OFFSET / 4);
-
-    /* Save firmware region contents */
-    uint32_t fw_before[FW_REGION_WORDS];
-    for (size_t i = 0; i < FW_REGION_WORDS; i++)
-        fw_before[i] = fw[i];
-
-    printf("  Firmware region (0x%04X-0x%04X): %u words saved\n",
-           FW_REGION_OFFSET, FW_REGION_OFFSET + FW_REGION_SIZE - 1,
-           FW_REGION_WORDS);
-
-    /* Print first few words for reference */
-    printf("  First 8 words: ");
-    for (size_t i = 0; i < 8 && i < FW_REGION_WORDS; i++)
-        printf("%08x ", fw_before[i]);
-    printf("\n");
-
-    /* Run the write/readback test (which writes to safe region only) */
-    /* Already done above, but let's verify firmware region is unchanged */
-
-    /* Re-read and compare */
-    uint32_t errors = 0;
-    for (size_t i = 0; i < FW_REGION_WORDS; i++) {
-        uint32_t actual = fw[i];
-        if (actual != fw_before[i]) {
-            if (errors == 0) {
-                printf("  CORRUPTION at word %zu: was 0x%08x, now 0x%08x\n",
-                       i, fw_before[i], actual);
-            }
-            errors++;
-        }
-    }
-
-    if (errors == 0) {
-        printf("  Status: PASS (firmware region unchanged)\n");
-    } else {
-        printf("  Status: FAIL (%u words corrupted!)\n", errors);
-    }
-
-    printf("\n");
-    return errors > 0 ? 1 : 0;
 }
 
 /* ─── Main ────────────────────────────────────────────────────── */
