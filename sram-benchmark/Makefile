@@ -5,6 +5,7 @@
 #   sram_probe     SRAM access verification and bandwidth measurement
 #   fifo_probe     Direct PIO FIFO access via /dev/mem
 #   sram_dma_bench SRAM cyclic DMA throughput benchmark
+#   pio_unclaim    Release all PIO state machine claims
 #   clean          Remove build artifacts
 
 CC       ?= gcc
@@ -23,7 +24,7 @@ IS_RPI5 := $(shell test -e /dev/pio0 && echo yes || echo no)
 
 # ─── Default target ─────────────────────────────────────────
 .PHONY: all
-all: sram_probe fifo_probe sram_dma_bench sram_addr_probe
+all: sram_probe fifo_probe sram_dma_bench sram_addr_probe pio_unclaim
 
 # ─── Target: sram_probe (requires /dev/mem access) ──────────
 sram_probe: sram_probe.c
@@ -76,7 +77,19 @@ else
 	@false
 endif
 
+# ─── Target: pio_unclaim (PIO SM cleanup utility) ─────────────
+pio_unclaim: pio_unclaim.c
+ifeq ($(FORCE_BUILD),1)
+	$(CC) $(BENCH_CFLAGS) -o $@ $< -lpio
+else ifeq ($(IS_RPI5),yes)
+	$(CC) $(BENCH_CFLAGS) -o $@ $< -lpio
+else
+	@echo "ERROR: pio_unclaim requires RPi5 with /dev/pio0 and libpio-dev"
+	@echo "Use FORCE_BUILD=1 to override."
+	@false
+endif
+
 # ─── Target: clean ──────────────────────────────────────────
 .PHONY: clean
 clean:
-	rm -f sram_probe fifo_probe sram_dma_bench sram_addr_probe
+	rm -f sram_probe fifo_probe sram_dma_bench sram_addr_probe pio_unclaim
