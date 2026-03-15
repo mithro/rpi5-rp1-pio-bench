@@ -408,9 +408,13 @@ int main(int argc, char *argv[])
 	double duration = 2.0;
 	int use_sram = 0;
 
+	int diag_only = 0;
+
 	for (int i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "--sram") == 0)
 			use_sram = 1;
+		else if (strcmp(argv[i], "--diag") == 0)
+			diag_only = 1;
 		else
 			duration = atof(argv[i]);
 	}
@@ -435,19 +439,24 @@ int main(int argc, char *argv[])
 	}
 
 	int ret;
-	if (use_sram) {
-		/* SRAM mode: skip DRAM diag, go straight to SRAM test */
+	if (diag_only) {
+		/* Diagnostic-only mode: run the kernel DMA self-test.
+		 * WARNING: the dw-axi-dma driver's descriptor pool gets
+		 * corrupted after diag (stale IRQ race), so the module must
+		 * be reloaded before running a normal benchmark. */
+		printf("Step 3: Running DMA diagnostic (standalone)...\n");
+		int diag_ret = ioctl(dev_fd, SRAM_IOC_DMA_DIAG);
+		if (diag_ret < 0)
+			printf("  DIAG: FAILED (%s) — check dmesg\n", strerror(errno));
+		else
+			printf("  DIAG: PASSED — cyclic DMA loopback verified\n");
+		ret = diag_ret < 0 ? 1 : 0;
+	} else if (use_sram) {
+		/* SRAM mode */
 		ret = test_sram_loopback(duration);
 	} else {
-		/* DRAM mode: run diagnostic then throughput test */
-		printf("Step 3: Running DMA diagnostic...\n");
-		{
-			int diag_ret = ioctl(dev_fd, SRAM_IOC_DMA_DIAG);
-			if (diag_ret < 0)
-				printf("  DIAG: FAILED (%s) — check dmesg\n", strerror(errno));
-			else
-				printf("  DIAG: PASSED — cyclic DMA loopback verified\n");
-		}
+		/* DRAM mode: skip diag (it corrupts DMA channel state).
+		 * Run diag separately with --diag flag. */
 		ret = test_dma_loopback(duration);
 	}
 
