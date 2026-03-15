@@ -18,7 +18,7 @@ CFLAGS   := -Wall -Wextra -Werror -O2 -std=c11
 
 .PHONY: all clean
 
-all: sram_write_test.bin pio_fifo_test.bin core1_launcher
+all: sram_write_test.bin pio_fifo_test.bin pio_bridge.bin core1_launcher m3_bridge_bench
 
 # ─── Core 1 firmware (common pattern) ─────────────────────
 %.o: %.s
@@ -30,10 +30,13 @@ all: sram_write_test.bin pio_fifo_test.bin core1_launcher
 %.bin: %.elf
 	$(OBJCOPY) $< -O binary $@
 
-# ─── Host launcher ─────────────────────────────────────────
+# ─── Host tools ───────────────────────────────────────────
 core1_launcher: core1_launcher.c
 	$(CC) $(CFLAGS) -o $@ $< -lm
 
+m3_bridge_bench: m3_bridge_bench.c
+	$(CC) $(CFLAGS) -I/usr/include/piolib -o $@ $< -lm -lpio
+
 # ─── Clean ─────────────────────────────────────────────────
 clean:
-	rm -f *.o *.elf *.bin core1_launcher
+	rm -f *.o *.elf *.bin core1_launcher m3_bridge_bench
