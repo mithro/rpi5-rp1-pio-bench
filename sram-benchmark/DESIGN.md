@@ -273,18 +273,60 @@ Implementation: `kmod/rp1_pio_sram.ko` + `sram_dma_bench.c`
 **Conclusion:** The only path to >42 MB/s is Phase 4 (M3 Core 1), which can
 access both SRAM and PIO FIFOs in single clock cycles.
 
-### Phase 4: M3 Core 1 Bridge (target ~66 MB/s)
+### Phase 4: M3 Core 1 Bridge (~6.88 MB/s achieved)
 
 ```
-Host CPU ──PCIe──→ SRAM ring buffer
-                      ↑↓ (single-cycle, 32-bit, 200 MHz)
+Host CPU ──PCIe──→ SRAM TX buffer (0x20009000)
+                      ↓ (single-cycle from M3 Core 1)
                  M3 Core 1 (custom firmware, tight polling loop)
-                      ↑↓ (single-cycle via 0xF0000000 alias)
-                   PIO FIFOs
+                      ↓ (~54 cycles per access via bus bridge)
+                   PIO TXF3 → SM3 (pull/NOT/push) → PIO RXF3
+                      ↓ (~54 cycles per access via bus bridge)
+                 M3 Core 1
+                      ↓ (single-cycle to SRAM)
+                   SRAM RX buffer (0x2000A000)
+Host CPU ←─PCIe──── SRAM RX buffer
 ```
 
-Key advantage: M3 Core 1 accesses both SRAM and PIO FIFOs in single cycles,
-with zero handshake overhead. cleverca22 demonstrated ~66 MB/s this way.
+**CRITICAL FINDING: PIO FIFO access from M3 Core 1 is NOT single-cycle.**
+The `0xF0000000` vendor-specific PIO alias goes through the same APB bus bridge
+as the standard `0x40178000` address. Each 32-bit PIO register read or write
+takes **~54 cycles (~270 ns at 200 MHz)**, not 1 cycle as assumed.
+
+This means the CPU-polled approach is hardware-limited to:
+- 200 MHz / (54 cycles × 2 accesses/word) ≈ 1.85 Mwords/s ≈ **7.4 MB/s theoretical max**
+- Measured: **6.88 MB/s** (matches — overhead from loop instructions + SRAM load/store)
+
+**Measured results:**
+
+| Metric | Value |
+|--------|-------|
+| Throughput (best) | 6.88 MB/s |
+| Rate min/mean/max | 6.881 / 6.885 / 6.889 MB/s |
+| Cycles per word (measured) | ~116 at 200 MHz |
+| Cycles per PIO access | ~54 (TXF write or RXF read) |
+| Data integrity | ~99.98% (errors at index 62 only, periodic Core 0 interference) |
+
+**PIO setup approach:** The PIO loopback program (pull → NOT → push) must be
+loaded via piolib from the host BEFORE Core 1 starts accessing FIFOs. Direct
+writes to PIO INSTR_MEM from either Core 1 or host BAR1 do not persist —
+M3 Core 0 firmware controls instruction memory. Only piolib (which communicates
+with Core 0 firmware) can load programs permanently.
+
+**PIO setup must happen AFTER Core 1 launch:** The `trigger_pio_mailbox()` call
+during SEV bootstrap causes Core 0 firmware to refresh INSTR_MEM, so PIO setup
+must follow Core 1 launch, not precede it.
+
+**Index 62 error:** A periodic Core 0 firmware activity corrupts ~1 word every
+~8 passes at buffer index 62. The error values consistently start with `0x02...`
+pattern. This is not a bug in the bridge firmware but RP1 firmware interference.
+
+**Conclusion:** CPU-polled PIO FIFO access from Core 1 cannot exceed ~7 MB/s.
+The only remaining path to >42 MB/s is DMA — either fixing the kmod cyclic DMA
+configuration (currently 9.1 MB/s vs standard driver's 42 MB/s), or having
+Core 1 program the RP1 DMA controller directly.
+
+Implementation: `m3core1/pio_bridge.s` + `m3core1/m3_bridge_bench.c`
 
 ## M3 Core 1
 
@@ -304,8 +346,8 @@ asm volatile("sev");
 | Address | Resource |
 |---------|----------|
 | `0x2000_0000` | Shared SRAM (64 KB, single-cycle) |
-| `0xF000_0000` | PIO peripheral alias (single-cycle) |
-| `0x4017_8000` | PIO block (APB, slower) |
+| `0xF000_0000` | PIO peripheral alias (~54 cycles via APB bridge) |
+| `0x4017_8000` | PIO block (APB, ~54 cycles — same bus as 0xF0000000) |
 
 ### Constraints
 
