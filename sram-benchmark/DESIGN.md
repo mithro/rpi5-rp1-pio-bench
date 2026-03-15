@@ -59,43 +59,97 @@ sram: sram@400000 {
 };
 ```
 
-### Actual Firmware SRAM Usage (Measured)
+### RP1 M3 Firmware Overview
+
+The RP1 contains two ARM Cortex-M3 cores. Core 0 runs closed-source firmware
+from Raspberry Pi's internal `rp1-sdk` repository. The firmware is:
+
+- **Embedded in the BCM2712 SPI EEPROM** (not a filesystem file)
+- **Loaded by the VPU bootloader** (`start_cd.elf`) before Linux starts
+- **Stored as two LZ4-compressed blobs:**
+  - `rp1c0fw1.bin` (13,942 → 16,384 bytes): Main system firmware
+  - `rp1c0fw2.bin` (8,512 → 14,864 bytes): PCIe link management / encrypted blob
+- **Runs directly from shared SRAM** at `0x20000000`
+- **Source paths in binary:** `/home/phil/pi/rp1-sdk/src/drivers/rp1_platform/`
+- **Built with Pico SDK framework** (same as RP2040/RP2350)
+- **Core 1 is unused** by stock firmware (available for custom code)
+
+The firmware handles: clock/PLL configuration, PCIe link management (LTSSM state
+machine), peripheral initialization, and PIO/DMA RPC services via mailbox IPC.
+
+### Actual Firmware SRAM Layout (Measured)
 
 **WARNING:** The device tree only reserves 0xFF00–0xFFFF (256 bytes) as the firmware
-mailbox, but the RP1 firmware actually uses **94.9% of shared SRAM** (61,676 bytes).
-Writing to firmware-occupied SRAM regions corrupts RP1 PIO state, causing all SM
-claims to return ETIMEDOUT. Recovery requires a full power cycle (Linux reboot does
-NOT reset RP1).
+mailbox, but the firmware's code and data occupy the lower ~36 KB, plus descriptors
+and an encrypted blob. Writing to firmware-critical regions corrupts RP1 PIO state.
+Recovery requires a full power cycle (Linux reboot does NOT reset RP1).
 
-Measured SRAM usage after fresh boot (via `sram_dump` and `sram_monitor`):
+Measured via `sram_dump`, `sram_monitor`, and `sram_region_test`:
 
 ```
-Category           Words   Bytes    %     Notes
-Static non-zero    15,419  61,676   94.1  Firmware code/data loaded at boot
-Always zero           835   3,340    5.1  Scattered in tiny gaps (largest: 872 B)
-Dynamic               130     520    0.8  Counters/timestamps at 0x9F48-0xA14F
+Offset    Size      Purpose                                    Writable?
+──────────────────────────────────────────────────────────────────────────
+0x0000    320 B     Vector table (80 entries)                   NO (crash)
+0x0140    60 B      VTOR relocation code                        NO
+0x017C    152 B     BKPT stubs for unused IRQ handlers          NO
+0x0214    224 B     Reset handler + CRT startup                 NO
+0x0304    112 B     Boot config table (magic words, addresses)  NO
+0x0378    328 B     Platform init functions                     NO
+0x04C4    17,528 B  Main firmware code                          NO
+0x4940    10,692 B  Code: printf, PCIe LTSSM state machine      NO
+0x7304    1,532 B   PCIe state strings, bus master names        NO
+0x7900    4,352 B   Debug strings, assert messages, paths       NO
+──────────────────────────────────────────────────────────────────────────
+0x8000    2,560 B   Firmware data (safe to overwrite)           YES ✓
+──────────────────────────────────────────────────────────────────────────
+0x8A00    256 B     PIO device descriptors + pad register map   NO (PIO crash)
+──────────────────────────────────────────────────────────────────────────
+0x8B00    29,952 B  Clock/peripheral config, encrypted blob     YES ✓
+                    (includes rp1c0fw2.bin at ~0xB728)
+──────────────────────────────────────────────────────────────────────────
+0xFF00    256 B     Firmware mailbox (host↔firmware IPC)        NO (mailbox)
 ```
 
-Key non-zero regions:
-- `0x0000 - 0x04BF`: Firmware data structures (~1.2 KB)
-- `0x04C4 - 0x493B`: Massive firmware block (~17.5 KB, likely code)
-- `0x4940 - 0x7303`: More firmware data (~10 KB)
-- `0x7308 - 0x8BEF`: Sparse firmware structures (~5 KB)
-- `0x8BF0 - 0xA14F`: Mix of static and dynamic data (~5.5 KB)
-- `0xA178 - 0xB68F`: Firmware data (~5.6 KB)
-- `0xB728 - 0xFFFF`: Dense firmware data through mailbox (~18 KB)
+**Available SRAM: ~32,512 bytes (31.75 KB)** in two regions:
+- `0x8000 - 0x89FF` (2,560 bytes)
+- `0x8B00 - 0xFEFF` (29,952 bytes) — largest contiguous block
 
-**Available SRAM for user buffers: effectively ZERO.**
-The 3,340 bytes of zero space is scattered in gaps too small for DMA ring buffers.
+The PIO descriptor block at `0x8A00` contains the string "PIO " followed by
+GPIO pad control register addresses (0x400C4xxx). Overwriting it crashes PIO.
+
+Note: regions marked "YES" contain non-zero firmware data but PIO continues to
+function after overwriting them. The data may be boot-time configuration that
+the firmware caches internally, or data only used during specific operations.
+
+### Dynamic Firmware State
+
+Only ~520 bytes at `0x9F48-0xA14F` are actively written by the firmware at
+runtime (counter/timestamp updates every ~2 seconds). All other non-zero data
+is static after boot. The dynamic region is within the safe-to-overwrite zone,
+but overwriting it may affect firmware diagnostics or statistics.
 
 ### Implications for DMA Buffer Placement
 
-The Phase 3 plan assumed 32 KB of SRAM was available for DMA ring buffers.
-This is NOT the case. Alternative approaches:
-1. Use host DRAM for DMA buffers (current approach, ~42 MB/s)
-2. M3 Core 1 bridge (Phase 4) — avoids SRAM buffers entirely
-3. Negotiate SRAM allocation with firmware (requires firmware modification)
-4. Find a firmware version/config that uses less SRAM
+The original Phase 3 plan assumed 32 KB was available for ring buffers.
+We have **~31.75 KB available** — enough for Phase 3 if we use a layout like:
+
+```
+0x8000    2,560 B   Metadata / control structure
+0x8A00    256 B     *** PIO DESCRIPTORS — DO NOT TOUCH ***
+0x8B00    14,336 B  TX ring buffer (14 KB = 4 periods × 3.5 KB)
+0xC900    14,080 B  RX ring buffer (~14 KB)
+0xFEFF              End of safe region
+0xFF00    256 B     *** FIRMWARE MAILBOX — DO NOT TOUCH ***
+```
+
+Alternative: skip Phase 3 and go directly to Phase 4 (M3 Core 1 bridge).
+
+### References
+
+- [MichaelBell/rp1-hacking](https://github.com/MichaelBell/rp1-hacking) — Custom M3 code at 0x8000+
+- [librerpi/rp1-lk](https://github.com/librerpi/rp1-lk) — Uses MEMBASE=0x20008000
+- [G33KatWork/RP1-Reverse-Engineering](https://github.com/G33KatWork/RP1-Reverse-Engineering) — Firmware extraction
+- rp1-sdk source (closed, Raspberry Pi internal): `/home/phil/pi/rp1-sdk/`
 
 ### Host Access
 
@@ -150,24 +204,34 @@ Host CPU ──write──→ DRAM buffer
 Host CPU ←─read──── DRAM buffer
 ```
 
-### Phase 3: SRAM + Cyclic DMA — BLOCKED
+### Phase 3: SRAM + Cyclic DMA (target >42 MB/s)
 
-**STATUS:** Cannot implement as designed. RP1 firmware occupies 94.9% of shared
-SRAM. No contiguous free region large enough for DMA ring buffers (need 32 KB,
-largest zero gap is 872 bytes). Writing to firmware-occupied SRAM regions crashes
-RP1 PIO subsystem.
+**STATUS:** Feasible with reduced buffer sizes. Region testing confirmed
+~31.75 KB of SRAM is writable without disrupting firmware operation.
 
-Original plan required:
 ```
-Host CPU ──PCIe──→ SRAM ring buffer (16 KB TX + 16 KB RX)
+Host CPU ──PCIe──→ SRAM ring buffer (at 0x8B00-0xFEFF, ~29 KB)
                       ↓ (RP1-internal AXI, no PCIe per burst)
                  RP1 DMA (cyclic) ──APB──→ PIO FIFO
+                                              ↓ (PIO program)
+                                           PIO FIFO
+                 RP1 DMA (cyclic) ──APB──← PIO FIFO
+                      ↑ (RP1-internal AXI)
+                   SRAM ring buffer
+Host CPU ←─PCIe──── SRAM ring buffer
 ```
 
-Possible unblocking paths:
-- Firmware modification to free SRAM regions
-- Different firmware configuration that uses less SRAM
-- Negotiate SRAM allocation via firmware RPC
+Revised SRAM ring buffer layout:
+```
+0x8000    2,560 B   Control/metadata
+0x8A00    256 B     *** PIO DESCRIPTORS — SKIP ***
+0x8B00    14,080 B  TX ring buffer (~14 KB, 4 periods × 3.5 KB)
+0xC200    15,616 B  RX ring buffer (~15 KB, 4 periods × ~3.8 KB)
+0xFEFF              End of safe region
+```
+
+Key advantage: DMA reads/writes SRAM over internal AXI bus,
+eliminating per-burst PCIe round-trips.
 
 ### Phase 4: M3 Core 1 Bridge (target ~66 MB/s)
 
