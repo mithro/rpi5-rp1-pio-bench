@@ -505,11 +505,12 @@ monitor:
         double elapsed  = gettime() - t_start;
         double rate     = (c_now - c_start) / elapsed;
 
-        /* Extended status fields (PIO FIFO test firmware) */
+        /* Extended status fields */
         uint32_t result   = SRAM(STATUS_OFFSET + 0x08);
+        uint32_t step     = SRAM(STATUS_OFFSET + 0x0C);
 
-        printf("  t=%ds: counter=%u (+%u) rate=%.1f loops/sec",
-               s + 1, c_now, c_now - c_prev, rate);
+        printf("  t=%ds: counter=%u (+%u) rate=%.1f loops/sec step=%u",
+               s + 1, c_now, c_now - c_prev, rate, step);
 
         if (result != 0) {
             const char *res_str = (result == 1) ? "PASS" :
