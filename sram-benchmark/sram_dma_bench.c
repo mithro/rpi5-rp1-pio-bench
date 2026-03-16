@@ -60,6 +60,26 @@ struct sram_dma_status {
 #define DMA_MMAP_OFFSET    0
 #define DMA_MMAP_SIZE      0x4000  /* 16,384 bytes (one 16 KB page) */
 
+/* ─── Benchmark results (filled by test functions) ────────────── */
+
+static struct {
+	const char *mode;	/* "dram" or "sram" */
+	double duration;
+	uint64_t tx_bytes;
+	uint64_t rx_bytes;
+	double tx_mbps;
+	double rx_mbps;
+	int verify_pass;	/* 1=pass, 0=fail */
+	uint32_t verify_errors;
+	uint32_t verify_total;
+	unsigned periods_clean;
+	unsigned periods_torn;
+	unsigned periods_bad;
+	unsigned periods_empty;
+} results;
+
+static int json_mode;
+
 /* ─── Timing ──────────────────────────────────────────────────── */
 
 static double get_time_sec(void)
@@ -321,6 +341,22 @@ static int test_dma_loopback(double duration_sec)
 	}
 
 	printf("\n");
+
+	/* Populate results struct */
+	results.mode = "dram";
+	results.duration = elapsed;
+	results.tx_bytes = st.tx_bytes;
+	results.rx_bytes = st.rx_bytes;
+	results.tx_mbps = st.tx_bytes > 0 ? (double)st.tx_bytes / elapsed / (1024.0 * 1024.0) : 0;
+	results.rx_mbps = st.rx_bytes > 0 ? (double)st.rx_bytes / elapsed / (1024.0 * 1024.0) : 0;
+	results.verify_pass = verify_pass;
+	results.verify_errors = periods_bad;
+	results.verify_total = total_verified;
+	results.periods_clean = periods_clean;
+	results.periods_torn = periods_torn;
+	results.periods_bad = periods_bad;
+	results.periods_empty = periods_empty;
+
 	return (verify_pass && st.tx_bytes > 0) ? 0 : 1;
 }
 
@@ -398,6 +434,17 @@ static int test_sram_loopback(double duration_sec)
 	}
 	printf("\n");
 
+	/* Populate results struct */
+	results.mode = "sram";
+	results.duration = elapsed;
+	results.tx_bytes = st.tx_bytes;
+	results.rx_bytes = st.rx_bytes;
+	results.tx_mbps = st.tx_bytes > 0 ? (double)st.tx_bytes / elapsed / (1024.0 * 1024.0) : 0;
+	results.rx_mbps = st.rx_bytes > 0 ? (double)st.rx_bytes / elapsed / (1024.0 * 1024.0) : 0;
+	results.verify_pass = (st.verify_errors == 0 && st.tx_bytes > 0);
+	results.verify_errors = st.verify_errors;
+	results.verify_total = st.verify_total;
+
 	return (st.tx_bytes > 0 && st.rx_bytes > 0 && st.verify_errors == 0) ? 0 : 1;
 }
 
@@ -417,6 +464,8 @@ int main(int argc, char *argv[])
 			use_sram = 0;
 		else if (strcmp(argv[i], "--diag") == 0)
 			diag_only = 1;
+		else if (strcmp(argv[i], "--json") == 0)
+			json_mode = 1;
 		else if (strncmp(argv[i], "--duration=", 11) == 0)
 			duration = atof(argv[i] + 11);
 		else if (argv[i][0] != '-')
@@ -468,11 +517,32 @@ int main(int argc, char *argv[])
 	device_cleanup();
 	pio_teardown();
 
-	printf("===================================================\n");
-	if (ret == 0)
-		printf("RESULT: PASS\n");
-	else
-		printf("RESULT: FAIL\n");
+	if (json_mode && !diag_only) {
+		printf("{\"mode\":\"%s\",\"result\":\"%s\","
+		       "\"duration\":%.3f,"
+		       "\"tx_bytes\":%lu,\"rx_bytes\":%lu,"
+		       "\"tx_mbps\":%.2f,\"rx_mbps\":%.2f,"
+		       "\"verify_pass\":%s,"
+		       "\"verify_errors\":%u,\"verify_total\":%u,"
+		       "\"periods_clean\":%u,\"periods_torn\":%u,"
+		       "\"periods_bad\":%u,\"periods_empty\":%u}\n",
+		       results.mode ? results.mode : "unknown",
+		       ret == 0 ? "PASS" : "FAIL",
+		       results.duration,
+		       (unsigned long)results.tx_bytes,
+		       (unsigned long)results.rx_bytes,
+		       results.tx_mbps, results.rx_mbps,
+		       results.verify_pass ? "true" : "false",
+		       results.verify_errors, results.verify_total,
+		       results.periods_clean, results.periods_torn,
+		       results.periods_bad, results.periods_empty);
+	} else {
+		printf("===================================================\n");
+		if (ret == 0)
+			printf("RESULT: PASS\n");
+		else
+			printf("RESULT: FAIL\n");
+	}
 
 	return ret;
 }
