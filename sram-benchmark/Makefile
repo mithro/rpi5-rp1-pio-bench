@@ -2,11 +2,14 @@
 #
 # Targets:
 #   all            Build all probe tools (requires RPi5 + libpio-dev)
-#   sram_probe     SRAM access verification and bandwidth measurement
-#   fifo_probe     Direct PIO FIFO access via /dev/mem
-#   sram_dma_bench SRAM cyclic DMA throughput benchmark
-#   pio_unclaim    Release all PIO state machine claims
-#   clean          Remove build artifacts
+#   sram_probe      SRAM access verification and bandwidth measurement
+#   fifo_probe      Direct PIO FIFO access via /dev/mem
+#   sram_dma_bench  SRAM cyclic DMA throughput benchmark
+#   sram_addr_probe Probe DMA-accessible SRAM addresses
+#   sram_monitor    Monitor SRAM for dynamic firmware changes
+#   sram_region_test Test which SRAM regions are safe to write
+#   pio_unclaim     Release all PIO state machine claims
+#   clean           Remove build artifacts
 
 CC       ?= gcc
 CFLAGS   := -Wall -Wextra -Werror -O2 -std=c11
@@ -24,7 +27,7 @@ IS_RPI5 := $(shell test -e /dev/pio0 && echo yes || echo no)
 
 # ─── Default target ─────────────────────────────────────────
 .PHONY: all
-all: sram_probe fifo_probe sram_dma_bench sram_addr_probe pio_unclaim
+all: sram_probe fifo_probe sram_dma_bench sram_addr_probe sram_monitor sram_region_test pio_unclaim
 
 # ─── Target: sram_probe (requires /dev/mem access) ──────────
 sram_probe: sram_probe.c
@@ -77,6 +80,30 @@ else
 	@false
 endif
 
+# ─── Target: sram_monitor (SRAM dynamic change monitor) ───────
+sram_monitor: sram_monitor.c
+ifeq ($(FORCE_BUILD),1)
+	$(CC) $(CFLAGS) -O2 -o $@ $< -lm
+else ifeq ($(IS_RPI5),yes)
+	$(CC) $(CFLAGS) -O2 -o $@ $< -lm
+else
+	@echo "ERROR: sram_monitor requires RPi5 with /dev/pio0"
+	@echo "Use FORCE_BUILD=1 to override."
+	@false
+endif
+
+# ─── Target: sram_region_test (safe SRAM region detection) ────
+sram_region_test: sram_region_test.c
+ifeq ($(FORCE_BUILD),1)
+	$(CC) $(BENCH_CFLAGS) -o $@ $< -lpio -lm
+else ifeq ($(IS_RPI5),yes)
+	$(CC) $(BENCH_CFLAGS) -o $@ $< -lpio -lm
+else
+	@echo "ERROR: sram_region_test requires RPi5 with /dev/pio0 and libpio-dev"
+	@echo "Use FORCE_BUILD=1 to override."
+	@false
+endif
+
 # ─── Target: pio_unclaim (PIO SM cleanup utility) ─────────────
 pio_unclaim: pio_unclaim.c
 ifeq ($(FORCE_BUILD),1)
@@ -92,4 +119,4 @@ endif
 # ─── Target: clean ──────────────────────────────────────────
 .PHONY: clean
 clean:
-	rm -f sram_probe fifo_probe sram_dma_bench sram_addr_probe pio_unclaim
+	rm -f sram_probe fifo_probe sram_dma_bench sram_addr_probe sram_monitor sram_region_test pio_unclaim
