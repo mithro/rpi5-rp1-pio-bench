@@ -27,6 +27,7 @@
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <time.h>
+#include <pthread.h>
 #include <unistd.h>
 
 #include "piolib.h"
@@ -448,12 +449,153 @@ static int test_sram_loopback(double duration_sec)
 	return (st.tx_bytes > 0 && st.rx_bytes > 0 && st.verify_errors == 0) ? 0 : 1;
 }
 
+/* ─── Test: piolib DMA baseline ──────────────────────────────── */
+
+struct xfer_args {
+	PIO pio;
+	uint sm;
+	enum pio_xfer_dir dir;
+	void *buf;
+	size_t size;
+	int ret;
+};
+
+static void *xfer_thread(void *arg)
+{
+	struct xfer_args *a = (struct xfer_args *)arg;
+	a->ret = pio_sm_xfer_data(a->pio, a->sm, a->dir, a->size, a->buf);
+	return NULL;
+}
+
+static int test_piolib_baseline(double duration_sec)
+{
+	printf("\n=== piolib DMA Baseline Benchmark ===\n\n");
+	printf("  Data path: Host DRAM → ioctl → kernel DMA → PIO FIFO (standard path)\n\n");
+
+	/* Use 4 KB aligned buffers (piolib requires 64-byte alignment) */
+	size_t xfer_size = 4096;
+	void *tx_buf = aligned_alloc(64, xfer_size);
+	void *rx_buf = aligned_alloc(64, xfer_size);
+	if (!tx_buf || !rx_buf) {
+		fprintf(stderr, "ERROR: aligned_alloc failed\n");
+		free(tx_buf);
+		free(rx_buf);
+		return -1;
+	}
+
+	/* Fill TX with pattern */
+	uint32_t *tx32 = (uint32_t *)tx_buf;
+	for (size_t i = 0; i < xfer_size / 4; i++)
+		tx32[i] = 0xA0000000u | (uint32_t)i;
+	memset(rx_buf, 0xDD, xfer_size);
+
+	/* Set DMACTRL: enable DREQ, threshold=1, priority=2 */
+	uint32_t dmactrl = 0x80000000u | (2 << 7) | 1;
+	pio_sm_set_dmactrl(pio, (uint)sm, true, dmactrl);
+	pio_sm_set_dmactrl(pio, (uint)sm, false, dmactrl);
+
+	/* Configure DMA channels */
+	int ret = pio_sm_config_xfer(pio, (uint)sm, PIO_DIR_TO_SM, xfer_size, 1);
+	if (ret < 0) {
+		fprintf(stderr, "ERROR: pio_sm_config_xfer TX failed: %d (errno=%s)\n",
+			ret, strerror(errno));
+		free(tx_buf);
+		free(rx_buf);
+		return -1;
+	}
+	ret = pio_sm_config_xfer(pio, (uint)sm, PIO_DIR_FROM_SM, xfer_size, 1);
+	if (ret < 0) {
+		fprintf(stderr, "ERROR: pio_sm_config_xfer RX failed: %d (errno=%s)\n",
+			ret, strerror(errno));
+		free(tx_buf);
+		free(rx_buf);
+		return -1;
+	}
+
+	/* Run transfers in a loop for the specified duration */
+	uint64_t total_bytes = 0;
+	unsigned iterations = 0;
+	unsigned errors = 0;
+
+	double t0 = get_time_sec();
+	double deadline = t0 + duration_sec;
+
+	printf("  Running for %.1f seconds...\n", duration_sec);
+
+	while (get_time_sec() < deadline) {
+		struct xfer_args tx_args = {
+			.pio = pio, .sm = (uint)sm,
+			.dir = PIO_DIR_TO_SM, .buf = tx_buf, .size = xfer_size
+		};
+		struct xfer_args rx_args = {
+			.pio = pio, .sm = (uint)sm,
+			.dir = PIO_DIR_FROM_SM, .buf = rx_buf, .size = xfer_size
+		};
+
+		pthread_t tx_tid, rx_tid;
+		pthread_create(&tx_tid, NULL, xfer_thread, &tx_args);
+		pthread_create(&rx_tid, NULL, xfer_thread, &rx_args);
+		pthread_join(tx_tid, NULL);
+		pthread_join(rx_tid, NULL);
+
+		if (tx_args.ret < 0 || rx_args.ret < 0) {
+			fprintf(stderr, "ERROR: xfer failed at iter %u (TX=%d, RX=%d)\n",
+				iterations, tx_args.ret, rx_args.ret);
+			errors++;
+			/* Re-configure for next attempt */
+			pio_sm_config_xfer(pio, (uint)sm, PIO_DIR_TO_SM, xfer_size, 1);
+			pio_sm_config_xfer(pio, (uint)sm, PIO_DIR_FROM_SM, xfer_size, 1);
+			continue;
+		}
+
+		/* Verify: RX should be bitwise NOT of TX */
+		uint32_t *rx32 = (uint32_t *)rx_buf;
+		for (size_t i = 0; i < xfer_size / 4; i++) {
+			if (rx32[i] != ~tx32[i]) {
+				errors++;
+				break;
+			}
+		}
+
+		total_bytes += xfer_size;
+		iterations++;
+	}
+
+	double elapsed = get_time_sec() - t0;
+	double mbps = (double)total_bytes / elapsed / (1024.0 * 1024.0);
+
+	printf("\n  Results:\n");
+	printf("    Duration:    %.3f seconds\n", elapsed);
+	printf("    Iterations:  %u (each %zu bytes)\n", iterations, xfer_size);
+	printf("    Total bytes: %lu\n", (unsigned long)total_bytes);
+	printf("    Throughput:  %.2f MB/s\n", mbps);
+	printf("    Errors:      %u\n", errors);
+	printf("\n");
+
+	/* Populate results struct */
+	results.mode = "piolib";
+	results.duration = elapsed;
+	results.tx_bytes = total_bytes;
+	results.rx_bytes = total_bytes;
+	results.tx_mbps = mbps;
+	results.rx_mbps = mbps;
+	results.verify_pass = (errors == 0);
+	results.verify_errors = errors;
+	results.verify_total = iterations;
+
+	free(tx_buf);
+	free(rx_buf);
+
+	return errors == 0 ? 0 : 1;
+}
+
 /* ─── Main ────────────────────────────────────────────────────── */
 
 int main(int argc, char *argv[])
 {
 	double duration = 2.0;
 	int use_sram = 0;
+	int use_piolib = 0;
 
 	int diag_only = 0;
 
@@ -462,6 +604,8 @@ int main(int argc, char *argv[])
 			use_sram = 1;
 		else if (strcmp(argv[i], "--dram") == 0)
 			use_sram = 0;
+		else if (strcmp(argv[i], "--piolib") == 0)
+			use_piolib = 1;
 		else if (strcmp(argv[i], "--diag") == 0)
 			diag_only = 1;
 		else if (strcmp(argv[i], "--json") == 0)
@@ -475,47 +619,49 @@ int main(int argc, char *argv[])
 	setbuf(stdout, NULL);
 	setbuf(stderr, NULL);
 
+	const char *mode_str = use_piolib ? "piolib (standard ioctl DMA)" :
+			       use_sram  ? "SRAM (RP1-internal)" :
+					   "DRAM (host, via PCIe)";
 	printf("sram_dma_bench — Cyclic DMA PIO Loopback Benchmark\n");
 	printf("===================================================\n");
-	printf("Mode: %s\n\n", use_sram ? "SRAM (RP1-internal)" : "DRAM (host, via PCIe)");
+	printf("Mode: %s\n\n", mode_str);
 
 	/* Step 1: Set up PIO loopback */
 	printf("Step 1: Setting up PIO loopback...\n");
 	if (pio_setup() < 0)
 		return 1;
 
-	/* Step 2: Open kernel module device */
-	printf("Step 2: Opening /dev/rp1_pio_sram...\n");
-	if (device_setup() < 0) {
-		pio_teardown();
-		return 1;
-	}
-
 	int ret;
-	if (diag_only) {
-		/* Diagnostic-only mode: run the kernel DMA self-test.
-		 * WARNING: the dw-axi-dma driver's descriptor pool gets
-		 * corrupted after diag (stale IRQ race), so the module must
-		 * be reloaded before running a normal benchmark. */
-		printf("Step 3: Running DMA diagnostic (standalone)...\n");
-		int diag_ret = ioctl(dev_fd, SRAM_IOC_DMA_DIAG);
-		if (diag_ret < 0)
-			printf("  DIAG: FAILED (%s) — check dmesg\n", strerror(errno));
-		else
-			printf("  DIAG: PASSED — cyclic DMA loopback verified\n");
-		ret = diag_ret < 0 ? 1 : 0;
-	} else if (use_sram) {
-		/* SRAM mode */
-		ret = test_sram_loopback(duration);
+	if (use_piolib) {
+		/* piolib baseline: no kernel module needed */
+		ret = test_piolib_baseline(duration);
+		pio_teardown();
 	} else {
-		/* DRAM mode: skip diag (it corrupts DMA channel state).
-		 * Run diag separately with --diag flag. */
-		ret = test_dma_loopback(duration);
-	}
+		/* Step 2: Open kernel module device */
+		printf("Step 2: Opening /dev/rp1_pio_sram...\n");
+		if (device_setup() < 0) {
+			pio_teardown();
+			return 1;
+		}
 
-	/* Cleanup */
-	device_cleanup();
-	pio_teardown();
+		if (diag_only) {
+			printf("Step 3: Running DMA diagnostic (standalone)...\n");
+			int diag_ret = ioctl(dev_fd, SRAM_IOC_DMA_DIAG);
+			if (diag_ret < 0)
+				printf("  DIAG: FAILED (%s) — check dmesg\n",
+				       strerror(errno));
+			else
+				printf("  DIAG: PASSED — cyclic DMA loopback verified\n");
+			ret = diag_ret < 0 ? 1 : 0;
+		} else if (use_sram) {
+			ret = test_sram_loopback(duration);
+		} else {
+			ret = test_dma_loopback(duration);
+		}
+
+		device_cleanup();
+		pio_teardown();
+	}
 
 	if (json_mode && !diag_only) {
 		printf("{\"mode\":\"%s\",\"result\":\"%s\","

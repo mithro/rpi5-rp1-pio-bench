@@ -56,9 +56,9 @@ endif
 # ─── Target: sram_dma_bench (requires rp1_pio_sram.ko) ──────
 sram_dma_bench: sram_dma_bench.c ../benchmark/loopback.pio.h
 ifeq ($(FORCE_BUILD),1)
-	$(CC) $(BENCH_CFLAGS) -o $@ sram_dma_bench.c -lpio -lm
+	$(CC) $(BENCH_CFLAGS) -o $@ sram_dma_bench.c -lpio -lm -lpthread
 else ifeq ($(IS_RPI5),yes)
-	$(CC) $(BENCH_CFLAGS) -o $@ sram_dma_bench.c -lpio -lm
+	$(CC) $(BENCH_CFLAGS) -o $@ sram_dma_bench.c -lpio -lm -lpthread
 else
 	@echo "ERROR: sram_dma_bench requires RPi5 with /dev/pio0 and libpio-dev"
 	@echo "Use FORCE_BUILD=1 to override."
