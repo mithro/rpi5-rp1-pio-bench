@@ -413,9 +413,13 @@ int main(int argc, char *argv[])
 	for (int i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "--sram") == 0)
 			use_sram = 1;
+		else if (strcmp(argv[i], "--dram") == 0)
+			use_sram = 0;
 		else if (strcmp(argv[i], "--diag") == 0)
 			diag_only = 1;
-		else
+		else if (strncmp(argv[i], "--duration=", 11) == 0)
+			duration = atof(argv[i] + 11);
+		else if (argv[i][0] != '-')
 			duration = atof(argv[i]);
 	}
 
