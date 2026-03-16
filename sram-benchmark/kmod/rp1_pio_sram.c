@@ -354,10 +354,13 @@ static void stop_cyclic_dma(void)
 	if (rx_chan)
 		dmaengine_terminate_sync(rx_chan);
 
-	/* NOTE: Do NOT call pio_sm_set_dmactrl or pio_sm_clear_fifos here.
-	 * Any PIO firmware RPC after SRAM DMA stop can corrupt the RP1
-	 * firmware state, making SM claims permanently stuck. PIO cleanup
-	 * is handled by userspace pio_teardown and module_exit only. */
+	/* Clear PIO FIFOs to allow the next DMA session to start cleanly.
+	 * Without this, stale data in FIFOs blocks new DMA transfers.
+	 * SRAM mode: skip this — any PIO firmware RPC after SRAM DMA
+	 * corrupts the RP1 firmware state (SM claims permanently stuck).
+	 * SRAM mode is limited to one run per boot anyway. */
+	if (pio_client && !sram_dma_mode)
+		pio_sm_clear_fifos(pio_client, 0);
 
 	dma_running = false;
 	pr_info("rp1_pio_sram: DMA stopped (%s mode, TX: %llu periods, RX: %llu periods)\n",
