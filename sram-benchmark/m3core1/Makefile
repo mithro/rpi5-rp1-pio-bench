@@ -18,7 +18,7 @@ CFLAGS   := -Wall -Wextra -Werror -O2 -std=c11
 
 .PHONY: all clean
 
-all: sram_write_test.bin pio_fifo_test.bin pio_bridge.bin core1_launcher m3_bridge_bench
+all: sram_write_test.bin pio_fifo_test.bin pio_bridge.bin clock_test.bin core1_launcher m3_bridge_bench
 
 # ─── Core 1 firmware (common pattern) ─────────────────────
 %.o: %.s
