@@ -354,13 +354,10 @@ static void stop_cyclic_dma(void)
 	if (rx_chan)
 		dmaengine_terminate_sync(rx_chan);
 
-	/* Clear PIO FIFOs after DMA stops to remove stale data.
-	 * NOTE: Do NOT disable DREQ here — calling pio_sm_set_dmactrl
-	 * with value 0 after SRAM DMA corrupts the RP1 firmware state,
-	 * making SM claims permanently stuck. DREQ disable is deferred
-	 * to module_exit only. */
-	if (pio_client)
-		pio_sm_clear_fifos(pio_client, 0);
+	/* NOTE: Do NOT call pio_sm_set_dmactrl or pio_sm_clear_fifos here.
+	 * Any PIO firmware RPC after SRAM DMA stop can corrupt the RP1
+	 * firmware state, making SM claims permanently stuck. PIO cleanup
+	 * is handled by userspace pio_teardown and module_exit only. */
 
 	dma_running = false;
 	pr_info("rp1_pio_sram: DMA stopped (%s mode, TX: %llu periods, RX: %llu periods)\n",
