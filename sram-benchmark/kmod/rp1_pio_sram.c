@@ -354,6 +354,13 @@ static void stop_cyclic_dma(void)
 	if (rx_chan)
 		dmaengine_terminate_sync(rx_chan);
 
+	/* Clear PIO FIFOs and disable DREQ after DMA stops */
+	if (pio_client) {
+		pio_sm_set_dmactrl(pio_client, 0, true, 0);
+		pio_sm_set_dmactrl(pio_client, 0, false, 0);
+		pio_sm_clear_fifos(pio_client, 0);
+	}
+
 	dma_running = false;
 	pr_info("rp1_pio_sram: DMA stopped (%s mode, TX: %llu periods, RX: %llu periods)\n",
 		sram_dma_mode ? "SRAM" : "DRAM",
@@ -1082,6 +1089,11 @@ static void __exit rp1_pio_sram_exit(void)
 	release_dma_channels();
 
 	if (pio_client) {
+		/* Disable DREQ signals before closing the PIO client,
+		 * to ensure the SM is fully released at firmware level. */
+		pio_sm_set_dmactrl(pio_client, 0, true, 0);
+		pio_sm_set_dmactrl(pio_client, 0, false, 0);
+		pio_sm_clear_fifos(pio_client, 0);
 		rp1_pio_close(pio_client);
 		pio_client = NULL;
 	}
