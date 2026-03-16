@@ -349,16 +349,26 @@ static void stop_cyclic_dma(void)
 	if (!dma_running)
 		return;
 
+	/* For DRAM mode: disable DREQ before terminating DMA to prevent
+	 * stale DMA requests from PIO during descriptor teardown. Without
+	 * this, the dw-axi-dma descriptor pool gets corrupted after ~15
+	 * terminate/re-prep cycles, causing a kernel panic.
+	 * SRAM mode: skip all PIO firmware RPCs (corrupts RP1 firmware). */
+	if (pio_client && !sram_dma_mode) {
+		pio_sm_set_dmactrl(pio_client, 0, true, 0);
+		pio_sm_set_dmactrl(pio_client, 0, false, 0);
+	}
+
 	if (tx_chan)
 		dmaengine_terminate_sync(tx_chan);
 	if (rx_chan)
 		dmaengine_terminate_sync(rx_chan);
 
+	/* Let any pending DMA IRQs drain before re-using channels */
+	msleep(5);
+
 	/* Clear PIO FIFOs to allow the next DMA session to start cleanly.
-	 * Without this, stale data in FIFOs blocks new DMA transfers.
-	 * SRAM mode: skip this — any PIO firmware RPC after SRAM DMA
-	 * corrupts the RP1 firmware state (SM claims permanently stuck).
-	 * SRAM mode is limited to one run per boot anyway. */
+	 * Without this, stale data in FIFOs blocks new DMA transfers. */
 	if (pio_client && !sram_dma_mode)
 		pio_sm_clear_fifos(pio_client, 0);
 
