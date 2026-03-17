@@ -413,7 +413,7 @@ Throughput is bidirectional (TX word written, NOT'd word read back).
 | TX-only DMA, DRAM (kmod) | 40.91 | — | 100% | PCIe posted writes |
 | Standard kernel DMA (baseline) | ~42 | ~42 | 100% | PCIe + APB handshake |
 | Cyclic DMA, DRAM bidirectional | 40.81 | 36.28 | 100/100 passes | PCIe read completions |
-| Cyclic DMA, SRAM bidirectional | **54.15** | **45.13** | N/A (firmware corruption) | APB DREQ handshake |
+| Cyclic DMA, SRAM bidirectional | **54.15** | **45.13** | 3/3 passes | APB DREQ handshake |
 | piolib ioctl DMA | 18.30 | 18.30 | 100% | ioctl overhead per xfer |
 | M3 Core 1 CPU-polled bridge | 6.89 | 6.89 | ~91% (index 62 errors) | APB bridge latency |
 | cleverca22 custom driver (ref) | — | ~66 | dropping samples | Direct register DMA |
@@ -425,8 +425,9 @@ Throughput is bidirectional (TX word written, NOT'd word read back).
    framework overhead. Uses a 1-instruction PIO generator (`in null, 32`).
 
 2. **Cyclic DMA with SRAM rings achieves the highest bidirectional throughput**
-   (54 MB/s TX), exceeding the standard kernel DMA baseline by 29%. However,
-   SRAM DMA mode corrupts RP1 firmware state, requiring PoE power cycle.
+   (54 MB/s TX), exceeding the standard kernel DMA baseline by 29%. Fixed:
+   SRAM rings moved past firmware dynamic region (0x9F48-0xA150) to prevent
+   DMA overwriting firmware state. Now reliable (3/3 back-to-back passes).
 
 3. **Cyclic DMA with DRAM rings is production-viable** at 40 MB/s TX, matching
    the standard kernel baseline. Passed 100/100 reliability sweep with data
@@ -452,7 +453,7 @@ Throughput is bidirectional (TX word written, NOT'd word read back).
 | FSTAT at 0xF0000000 does not dynamically update | Cannot poll RXEMPTY from Core 1 |
 | 0xF0000000 is 1.41× faster than 0x40178000 | Use 0xF0 alias for all M3 PIO access |
 | Core 0 firmware interference at word 62 | ~1 error per 10 passes on Core 1 path |
-| SRAM DMA corrupts firmware state | SRAM mode requires PoE power cycle recovery |
+| SRAM DMA corrupted firmware state (FIXED) | Rings overlapped FW dynamic region; moved to 0xA200+ |
 | DREQ must be disabled before DMA terminate | Otherwise kernel panic after ~15 cycles |
 
 ### Tool Summary
