@@ -40,13 +40,17 @@
 #include <linux/delay.h>
 #include <linux/pio_rp1.h>
 
-/* DMA ring buffer layout (in a single 16 KB coherent allocation) */
-#define DMA_BUF_SIZE       16384          /* 16 KB = 1 ARM64 page */
+/* DMA ring buffer layout.
+ * Bidirectional: 64 KB split into 32 KB TX + 32 KB RX (8 periods each).
+ * Unidirectional: full 64 KB for active direction (16 periods × 4 KB). */
+#define DMA_BUF_SIZE       65536          /* 64 KB */
 #define TX_RING_OFFSET     0             /* TX ring starts at offset 0 */
-#define TX_RING_SIZE       8192          /* 8 KB = 2 periods × 4 KB */
-#define RX_RING_OFFSET     8192          /* RX ring at offset 8 KB */
-#define RX_RING_SIZE       8192          /* 8 KB = 2 periods × 4 KB */
-#define DMA_PERIOD_SIZE    4096          /* 4 KB per DMA period (match standard driver) */
+#define TX_RING_SIZE       32768         /* 32 KB = 8 periods × 4 KB */
+#define RX_RING_OFFSET     32768         /* RX ring at offset 32 KB */
+#define RX_RING_SIZE       32768         /* 32 KB = 8 periods × 4 KB */
+#define DMA_PERIOD_SIZE    4096          /* 4 KB per DMA period */
+/* Unidirectional: use full buffer for one direction */
+#define UNI_RING_SIZE      65536         /* 64 KB = 16 periods × 4 KB */
 
 /* PIO FIFO physical addresses (BCM2712 / CPU perspective) */
 #define PIO_PHYS_BASE      0x1F00178000ULL
@@ -61,6 +65,7 @@
 #define SRAM_IOC_DMA_DIAG  _IO(SRAM_IOC_MAGIC, 4)
 #define SRAM_IOC_PROBE_ADDR _IOW(SRAM_IOC_MAGIC, 5, __u64)
 #define SRAM_IOC_START_SRAM_DMA _IO(SRAM_IOC_MAGIC, 6)
+#define SRAM_IOC_SET_DMA_DIR   _IOW(SRAM_IOC_MAGIC, 7, int)
 
 /* SRAM DMA address: M3 TCM (0x20000000) with RP1 internal bus prefix (0xc0) */
 #define SRAM_DMA_BASE      0xc020000000ULL
@@ -90,10 +95,19 @@ struct sram_dma_status {
 	__u32 verify_total;      /* total words checked */
 };
 
-/* RP1 PIO DMACTRL value: DREQ_EN (bit 31) + threshold=8 for heavy channels.
+/* RP1 PIO DMACTRL value: DREQ_EN (bit 31) + threshold config.
  * PR #7190 requires threshold = burst size to prevent data corruption.
- * Heavy channels (0, 1) support MSIZE=8 (8-beat AXI bursts = 32 bytes). */
-#define RP1_PIO_DMACTRL_DEFAULT		0x80000108
+ * Heavy channels (0, 1) support MSIZE=8 (8-beat AXI bursts = 32 bytes).
+ * Format: bit 31 = DREQ_EN, bits 12:8 = ?, bits 7:0 = threshold */
+#define RP1_PIO_DMACTRL_DEFAULT		0x80000108  /* threshold=8 */
+#define RP1_PIO_DMACTRL_THRESH4		0x80000104  /* threshold=4 */
+
+/* DMA direction mode: 0=both (bidirectional), 1=tx-only, 2=rx-only */
+#define DMA_DIR_BOTH    0
+#define DMA_DIR_TX_ONLY 1
+#define DMA_DIR_RX_ONLY 2
+
+static int dma_dir_mode;    /* set via ioctl, not module param */
 
 /* Module state */
 static struct device *pio_dev;
@@ -232,45 +246,54 @@ static int start_cyclic_dma(void)
 	struct dma_slave_config rx_cfg = {};
 	dma_addr_t tx_dma, rx_dma;
 	int ret;
+	bool do_tx = (dma_dir_mode != DMA_DIR_RX_ONLY);
+	bool do_rx = (dma_dir_mode != DMA_DIR_TX_ONLY);
 
 	if (dma_running)
 		return -EBUSY;
 	if (!tx_chan || !rx_chan || !dma_buf)
 		return -ENODEV;
 
-	tx_dma = dma_buf_addr + TX_RING_OFFSET;
+	/* For unidirectional modes, use the full 16 KB buffer for the active
+	 * direction (4 periods × 4 KB instead of 2 periods × 4 KB).
+	 * This reduces interrupt frequency and improves DMA efficiency. */
+	tx_dma = dma_buf_addr;
 	rx_dma = dma_buf_addr + RX_RING_OFFSET;
 
-	/* Configure TX: ring buffer → PIO TX FIFO */
-	tx_cfg.direction = DMA_MEM_TO_DEV;
-	tx_cfg.dst_addr = PIO_FIFO_TX0;
-	tx_cfg.dst_addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
-	tx_cfg.dst_maxburst = 8;	/* heavy channels support MSIZE=8 */
-	tx_cfg.src_addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
+	if (do_tx) {
+		/* Configure TX: ring buffer → PIO TX FIFO */
+		tx_cfg.direction = DMA_MEM_TO_DEV;
+		tx_cfg.dst_addr = PIO_FIFO_TX0;
+		tx_cfg.dst_addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
+		tx_cfg.dst_maxburst = 8;
+		tx_cfg.src_addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
 
-	ret = dmaengine_slave_config(tx_chan, &tx_cfg);
-	if (ret) {
-		pr_err("rp1_pio_sram: TX slave config failed: %d\n", ret);
-		return ret;
+		ret = dmaengine_slave_config(tx_chan, &tx_cfg);
+		if (ret) {
+			pr_err("rp1_pio_sram: TX slave config failed: %d\n", ret);
+			return ret;
+		}
 	}
 
-	/* Configure RX: PIO RX FIFO → ring buffer */
-	rx_cfg.direction = DMA_DEV_TO_MEM;
-	rx_cfg.src_addr = PIO_FIFO_RX0;
-	rx_cfg.src_addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
-	rx_cfg.src_maxburst = 8;	/* heavy channels support MSIZE=8 */
-	rx_cfg.dst_addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
+	if (do_rx) {
+		/* Configure RX: PIO RX FIFO → ring buffer */
+		rx_cfg.direction = DMA_DEV_TO_MEM;
+		rx_cfg.src_addr = PIO_FIFO_RX0;
+		rx_cfg.src_addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
+		rx_cfg.src_maxburst = 8;
+		rx_cfg.dst_addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
 
-	ret = dmaengine_slave_config(rx_chan, &rx_cfg);
-	if (ret) {
-		pr_err("rp1_pio_sram: RX slave config failed: %d\n", ret);
-		return ret;
+		ret = dmaengine_slave_config(rx_chan, &rx_cfg);
+		if (ret) {
+			pr_err("rp1_pio_sram: RX slave config failed: %d\n", ret);
+			return ret;
+		}
 	}
 
-	pr_info("rp1_pio_sram: TX: DRAM 0x%llx (%u B) -> PIO TXF0 0x%llx\n",
-		(u64)tx_dma, TX_RING_SIZE, (u64)PIO_FIFO_TX0);
-	pr_info("rp1_pio_sram: RX: PIO RXF0 0x%llx -> DRAM 0x%llx (%u B)\n",
-		(u64)PIO_FIFO_RX0, (u64)rx_dma, RX_RING_SIZE);
+	pr_info("rp1_pio_sram: mode=%s TX=0x%llx RX=0x%llx\n",
+		dma_dir_mode == DMA_DIR_TX_ONLY ? "TX-only" :
+		dma_dir_mode == DMA_DIR_RX_ONLY ? "RX-only" : "bidirectional",
+		(u64)tx_dma, (u64)rx_dma);
 
 	/* Enable PIO DREQ signals via rp1-pio firmware */
 	if (!pio_client) {
@@ -283,63 +306,78 @@ static int start_cyclic_dma(void)
 		}
 	}
 
-	ret = pio_sm_set_dmactrl(pio_client, 0, true, RP1_PIO_DMACTRL_DEFAULT);
-	if (ret) {
-		pr_err("rp1_pio_sram: TX dmactrl failed: %d\n", ret);
-		return ret;
+	if (do_tx) {
+		ret = pio_sm_set_dmactrl(pio_client, 0, true, RP1_PIO_DMACTRL_DEFAULT);
+		if (ret) {
+			pr_err("rp1_pio_sram: TX dmactrl failed: %d\n", ret);
+			return ret;
+		}
 	}
 
-	/* RX DMACTRL: same threshold as TX (must match burst size per PR #7190) */
-	ret = pio_sm_set_dmactrl(pio_client, 0, false, RP1_PIO_DMACTRL_DEFAULT);
-	if (ret) {
-		pr_err("rp1_pio_sram: RX dmactrl failed: %d\n", ret);
-		return ret;
+	if (do_rx) {
+		ret = pio_sm_set_dmactrl(pio_client, 0, false, RP1_PIO_DMACTRL_DEFAULT);
+		if (ret) {
+			pr_err("rp1_pio_sram: RX dmactrl failed: %d\n", ret);
+			return ret;
+		}
 	}
 
-	/* Prepare cyclic TX DMA */
-	tx_desc = dmaengine_prep_dma_cyclic(tx_chan, tx_dma,
-					     TX_RING_SIZE, DMA_PERIOD_SIZE,
-					     DMA_MEM_TO_DEV,
-					     DMA_PREP_INTERRUPT | DMA_CTRL_ACK);
-	if (!tx_desc) {
-		pr_err("rp1_pio_sram: failed to prepare TX cyclic DMA\n");
-		return -EIO;
-	}
-	tx_desc->callback = tx_dma_callback;
-
-	/* Prepare cyclic RX DMA */
-	rx_desc = dmaengine_prep_dma_cyclic(rx_chan, rx_dma,
-					     RX_RING_SIZE, DMA_PERIOD_SIZE,
-					     DMA_DEV_TO_MEM,
-					     DMA_PREP_INTERRUPT | DMA_CTRL_ACK);
-	if (!rx_desc) {
-		pr_err("rp1_pio_sram: failed to prepare RX cyclic DMA\n");
-		return -EIO;
-	}
-	rx_desc->callback = rx_dma_callback;
-
-	/* Reset counters and start */
+	/* Reset counters */
 	tx_period_count = 0;
 	rx_period_count = 0;
 
-	tx_cookie = dmaengine_submit(tx_desc);
-	if (dma_submit_error(tx_cookie)) {
-		pr_err("rp1_pio_sram: TX DMA submit failed\n");
-		return -EIO;
+	if (do_tx) {
+		u32 tx_size = do_rx ? TX_RING_SIZE : UNI_RING_SIZE;
+		tx_desc = dmaengine_prep_dma_cyclic(tx_chan, tx_dma,
+						     tx_size, DMA_PERIOD_SIZE,
+						     DMA_MEM_TO_DEV,
+						     DMA_PREP_INTERRUPT | DMA_CTRL_ACK);
+		if (!tx_desc) {
+			pr_err("rp1_pio_sram: failed to prepare TX cyclic DMA\n");
+			return -EIO;
+		}
+		tx_desc->callback = tx_dma_callback;
+
+		tx_cookie = dmaengine_submit(tx_desc);
+		if (dma_submit_error(tx_cookie)) {
+			pr_err("rp1_pio_sram: TX DMA submit failed\n");
+			return -EIO;
+		}
 	}
 
-	rx_cookie = dmaengine_submit(rx_desc);
-	if (dma_submit_error(rx_cookie)) {
-		pr_err("rp1_pio_sram: RX DMA submit failed\n");
-		dmaengine_terminate_sync(tx_chan);
-		return -EIO;
+	if (do_rx) {
+		u32 rx_size = do_tx ? RX_RING_SIZE : UNI_RING_SIZE;
+		rx_dma = do_tx ? dma_buf_addr + RX_RING_OFFSET : dma_buf_addr;
+		rx_desc = dmaengine_prep_dma_cyclic(rx_chan, rx_dma,
+						     rx_size, DMA_PERIOD_SIZE,
+						     DMA_DEV_TO_MEM,
+						     DMA_PREP_INTERRUPT | DMA_CTRL_ACK);
+		if (!rx_desc) {
+			pr_err("rp1_pio_sram: failed to prepare RX cyclic DMA\n");
+			if (do_tx)
+				dmaengine_terminate_sync(tx_chan);
+			return -EIO;
+		}
+		rx_desc->callback = rx_dma_callback;
+
+		rx_cookie = dmaengine_submit(rx_desc);
+		if (dma_submit_error(rx_cookie)) {
+			pr_err("rp1_pio_sram: RX DMA submit failed\n");
+			if (do_tx)
+				dmaengine_terminate_sync(tx_chan);
+			return -EIO;
+		}
 	}
 
-	dma_async_issue_pending(tx_chan);
-	dma_async_issue_pending(rx_chan);
+	if (do_tx)
+		dma_async_issue_pending(tx_chan);
+	if (do_rx)
+		dma_async_issue_pending(rx_chan);
 
 	dma_running = true;
-	pr_info("rp1_pio_sram: cyclic DMA started\n");
+	pr_info("rp1_pio_sram: cyclic DMA started (%s)\n",
+		dma_dir_mode == DMA_DIR_TX_ONLY ? "TX-only" :
+		dma_dir_mode == DMA_DIR_RX_ONLY ? "RX-only" : "bidirectional");
 
 	return 0;
 }
@@ -355,13 +393,15 @@ static void stop_cyclic_dma(void)
 	 * terminate/re-prep cycles, causing a kernel panic.
 	 * SRAM mode: skip all PIO firmware RPCs (corrupts RP1 firmware). */
 	if (pio_client && !sram_dma_mode) {
-		pio_sm_set_dmactrl(pio_client, 0, true, 0);
-		pio_sm_set_dmactrl(pio_client, 0, false, 0);
+		if (dma_dir_mode != DMA_DIR_RX_ONLY)
+			pio_sm_set_dmactrl(pio_client, 0, true, 0);
+		if (dma_dir_mode != DMA_DIR_TX_ONLY)
+			pio_sm_set_dmactrl(pio_client, 0, false, 0);
 	}
 
-	if (tx_chan)
+	if (tx_chan && dma_dir_mode != DMA_DIR_RX_ONLY)
 		dmaengine_terminate_sync(tx_chan);
-	if (rx_chan)
+	if (rx_chan && dma_dir_mode != DMA_DIR_TX_ONLY)
 		dmaengine_terminate_sync(rx_chan);
 
 	/* Let any pending DMA IRQs drain before re-using channels */
@@ -1038,6 +1078,21 @@ static long rp1_pio_sram_ioctl(struct file *file, unsigned int cmd,
 
 	case SRAM_IOC_START_SRAM_DMA:
 		return start_sram_dma();
+
+	case SRAM_IOC_SET_DMA_DIR: {
+		int dir;
+		if (dma_running)
+			return -EBUSY;
+		if (copy_from_user(&dir, (void __user *)arg, sizeof(dir)))
+			return -EFAULT;
+		if (dir < 0 || dir > 2)
+			return -EINVAL;
+		dma_dir_mode = dir;
+		pr_info("rp1_pio_sram: DMA direction set to %s\n",
+			dir == DMA_DIR_TX_ONLY ? "TX-only" :
+			dir == DMA_DIR_RX_ONLY ? "RX-only" : "bidirectional");
+		return 0;
+	}
 
 	default:
 		return -ENOTTY;

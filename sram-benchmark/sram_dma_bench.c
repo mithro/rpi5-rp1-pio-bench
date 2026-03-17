@@ -89,7 +89,7 @@ struct sram_dma_status {
 
 /* mmap the DMA buffer at offset 0 */
 #define DMA_MMAP_OFFSET    0
-#define DMA_MMAP_SIZE      0x4000  /* 16,384 bytes (one 16 KB page) */
+#define DMA_MMAP_SIZE      0x10000  /* 65,536 bytes (64 KB) */
 
 /* ─── Benchmark results (filled by test functions) ────────────── */
 
