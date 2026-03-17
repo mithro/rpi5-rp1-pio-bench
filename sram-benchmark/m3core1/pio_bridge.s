@@ -38,10 +38,12 @@
 .thumb
 .syntax unified
 
-/* ── PIO FIFO registers only (from M3 base 0xF0000000) ── */
+/* ── PIO FIFO registers (from M3 base 0xF0000000) ── */
 .equ PIO_BASE,       0xF0000000
+.equ PIO_FSTAT,      0x04
 .equ PIO_TXF3,       0x20
 .equ PIO_RXF3,       0x30
+.equ RXEMPTY3,       (1 << 27)   /* FSTAT bit: SM3 RX FIFO empty */
 
 /* Memory addresses */
 .equ STATUS,         0x20008D00
@@ -125,10 +127,17 @@ _entry:
     mov  r3, #0               /* r3 = word index within pass */
 
 .word_loop:
-    /* Simple loop: write TXF3, read RXF3, no explicit delay needed.
-     * The str to Device memory stalls CPU until write reaches PIO.
-     * The ldr from Device memory also takes multiple bus cycles.
-     * PIO needs 3 cycles (15ns) — well within bus latency. */
+    /* Per-word data path:
+     *   1. Load TX word from SRAM
+     *   2. Write to PIO TXF3 (SM3 pulls it)
+     *   3. Read from RXF3 (PIO processes in 3 cycles = 15ns,
+     *      well within the ~270ns APB bus latency per access)
+     *   4. Store to RX buffer in SRAM
+     *
+     * Note: FSTAT at 0xF0000000 does NOT dynamically update,
+     * so polling RXEMPTY is not possible from Core 1. The APB bus
+     * latency (~54 cycles per register access) provides enough
+     * implicit delay for PIO to complete processing. */
     ldr  r0, [r12, r3, lsl #2]   /* load TX[r3] from SRAM */
     str  r0, [r4, #PIO_TXF3]     /* write to PIO TX FIFO */
     ldr  r1, [r4, #PIO_RXF3]     /* read from PIO RX FIFO */
