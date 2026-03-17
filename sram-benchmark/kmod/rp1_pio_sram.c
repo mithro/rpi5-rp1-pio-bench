@@ -74,13 +74,17 @@
 #define SRAM_BAR2_PHYS     0x1F00400000ULL
 #define SRAM_BAR2_SIZE     0x10000          /* 64 KB */
 
-/* SRAM ring buffer layout (within safe region 0x8B00-0xFEFF = 29,952 bytes)
- * AVOID 0x8A00-0x8AFF (PIO descriptors) and 0xFF00-0xFFFF (firmware mailbox) */
-#define SRAM_TX_RING_OFF   0x8B00          /* TX ring starts here */
+/* SRAM ring buffer layout.
+ * AVOID regions:
+ *   0x8A00-0x8AFF (PIO descriptors — overwriting crashes PIO)
+ *   0x9F48-0xA14F (firmware dynamic state — overwriting causes SM cleanup hang)
+ *   0xFF00-0xFFFF (firmware mailbox)
+ * Safe placement: start TX ring AFTER the firmware dynamic region. */
+#define SRAM_TX_RING_OFF   0xA200          /* TX ring starts past FW dynamic (0xA150) */
 #define SRAM_TX_RING_SIZE  8192            /* 8 KB */
-#define SRAM_RX_RING_OFF   0xAB00          /* RX ring at TX + 8KB */
+#define SRAM_RX_RING_OFF   0xC200          /* RX ring at TX + 8KB */
 #define SRAM_RX_RING_SIZE  8192            /* 8 KB */
-/* End of RX ring: 0xAB00 + 0x2000 = 0xCB00 (well within 0xFEFF limit) */
+/* End of RX ring: 0xC200 + 0x2000 = 0xE200 (well within 0xFEFF limit) */
 
 struct sram_dma_status {
 	__u32 tx_ring_offset;
@@ -387,12 +391,11 @@ static void stop_cyclic_dma(void)
 	if (!dma_running)
 		return;
 
-	/* For DRAM mode: disable DREQ before terminating DMA to prevent
-	 * stale DMA requests from PIO during descriptor teardown. Without
-	 * this, the dw-axi-dma descriptor pool gets corrupted after ~15
-	 * terminate/re-prep cycles, causing a kernel panic.
-	 * SRAM mode: skip all PIO firmware RPCs (corrupts RP1 firmware). */
-	if (pio_client && !sram_dma_mode) {
+	/* Disable DREQ before terminating DMA to prevent stale DMA requests
+	 * from PIO during descriptor teardown. Without this, the dw-axi-dma
+	 * descriptor pool gets corrupted after ~15 terminate/re-prep cycles,
+	 * causing a kernel panic. */
+	if (pio_client) {
 		if (dma_dir_mode != DMA_DIR_RX_ONLY)
 			pio_sm_set_dmactrl(pio_client, 0, true, 0);
 		if (dma_dir_mode != DMA_DIR_TX_ONLY)
@@ -409,7 +412,7 @@ static void stop_cyclic_dma(void)
 
 	/* Clear PIO FIFOs to allow the next DMA session to start cleanly.
 	 * Without this, stale data in FIFOs blocks new DMA transfers. */
-	if (pio_client && !sram_dma_mode)
+	if (pio_client)
 		pio_sm_clear_fifos(pio_client, 0);
 
 	dma_running = false;
