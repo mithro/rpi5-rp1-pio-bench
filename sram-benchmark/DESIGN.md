@@ -125,15 +125,19 @@ the firmware caches internally, or data only used during specific operations.
 
 Only ~520 bytes at `0x9F48-0xA14F` are actively written by the firmware at
 runtime (counter/timestamp updates every ~2 seconds). All other non-zero data
-is static after boot. The dynamic region is within the safe-to-overwrite zone,
-but overwriting it may affect firmware diagnostics or statistics.
+is static after boot.
+
+**WARNING:** The dynamic region must NOT be overwritten by continuous DMA.
+While one-time host writes appear harmless, sustained DMA overwrites cause the
+firmware to hang during PIO SM lifecycle operations (unclaim/close). SRAM DMA
+ring buffers must be placed at `0xA200` or later to avoid this region.
 
 ### Implications for SRAM Usage
 
 **SRAM CAN be used as DMA source/destination** at DMA address `0xc020000000`.
 The RP1 DMA controller reaches M3 TCM via the `0xc0` internal bus prefix.
-However, SRAM DMA does not improve throughput over host DRAM DMA because
-the APB→PIO FIFO handshake is the bottleneck, not memory access latency.
+SRAM DMA outperforms host DRAM DMA by ~33% (54 vs 40 MB/s TX) because it
+eliminates PCIe round-trips for DMA data fetches.
 
 SRAM can be used as:
 1. **DMA ring buffers** — accessible at `0xc020000000` + offset (verified)
@@ -141,12 +145,13 @@ SRAM can be used as:
 3. **Host CPU data staging** — accessible via PCIe BAR2 mmap
 4. **Shared memory IPC** — between host CPU and M3 Core 1
 
-For Phase 4 (M3 Core 1 bridge), SRAM serves as the shared ring buffer between
-host CPU and Core 1's tight FIFO polling loop. Available safe regions:
+Available safe SRAM regions for DMA ring buffers and Core 1 data:
 ```
-0x8000    2,560 B   Available (firmware data, safe to overwrite)
+0x8000    2,560 B   Available (firmware data, safe for one-time writes)
 0x8A00    256 B     *** PIO DESCRIPTORS — DO NOT TOUCH ***
-0x8B00    29,952 B  Available (largest contiguous block)
+0x8B00    5,192 B   Available (safe for one-time writes only)
+0x9F48    520 B     *** FIRMWARE DYNAMIC STATE — NO CONTINUOUS DMA ***
+0xA200    23,808 B  Available for DMA ring buffers (largest safe block)
 0xFF00    256 B     *** FIRMWARE MAILBOX — DO NOT TOUCH ***
 ```
 
@@ -219,40 +224,23 @@ pattern to SRAM via BAR2, then DMA reading from `0xc020008B00` through PIO
 loopback (NOT), produces the expected bitwise-NOT pattern in the RX buffer.
 1024/1024 words matched perfectly.
 
-**SRAM DMA significantly outperforms host DRAM DMA:**
+**SRAM DMA outperforms host DRAM DMA by ~33%:**
 
 | Mode | TX Throughput | RX Throughput | Data Path |
 |------|-------------|-------------|-----------|
-| DRAM (host, via PCIe) | **40.81 MB/s** | **36.28 MB/s** | Host DRAM → PCIe → DMA → APB → PIO |
-| SRAM (RP1-internal) | **54.15 MB/s** | **45.13 MB/s** | SRAM → DMA → APB → PIO |
+| DRAM (host, via PCIe) | **40.35 MB/s** | **35.87 MB/s** | Host DRAM → PCIe → DMA → APB → PIO |
+| SRAM (RP1-internal) | **54.13 MB/s** | **45.10 MB/s** | SRAM → DMA → APB → PIO |
 
-SRAM mode is ~33% faster than DRAM mode because it eliminates PCIe round-trips
-for DMA data fetches. The DMA controller reads from SRAM via the RP1-internal
-AXI bus (single-cycle) instead of issuing PCIe read completions.
+SRAM mode eliminates PCIe round-trips for DMA data fetches — the DMA controller
+reads from SRAM via the RP1-internal AXI bus instead of issuing PCIe completions.
 
-**Critical DMA configuration (fixed from initial 9.1 MB/s):**
+**DMA configuration (critical for performance):**
 
-The initial implementation used suboptimal DMA settings that limited throughput
-to ~9 MB/s. Three fixes brought it to ~54 MB/s:
-
-| Setting | Before (9 MB/s) | After (54 MB/s) | Impact |
-|---------|-----------------|------------------|--------|
-| TX `dst_maxburst` | 4 | **8** | Use full heavy channel MSIZE=8 |
-| RX `src_maxburst` | **1** | **8** | 8× less handshake overhead |
-| DMACTRL threshold | TX=4, RX=**1** | TX=8, RX=**8** | Must match burst size (PR #7190) |
-| DMA period size | 1024 B | **4096 B** | 4× less interrupt overhead |
-
-**SRAM DMA address probe results:**
-
-| DMA Address | Source | Result |
-|-------------|--------|--------|
-| `0xc0401c0000` | RP1_RAM_BASE+0xc040 | TX=1 RX=0 (stall) |
-| `0xc040400000` | DT sram@400000 | Garbage (0xFFFFFFF0) |
-| `0x401c0000` | RP1_RAM_BASE raw | Garbage (0x21522152) |
-| `0x40400000` | BAR2 offset raw | Garbage (0x21522152) |
-| `0x20000000` | M3 TCM raw | Garbage (0x21522152) |
-| **`0xc020000000`** | **M3 TCM + 0xc0 prefix** | **PERFECT MATCH** |
-| `0x1f00400000` | CPU phys BAR2 | All 0xFFFFFFFF |
+| Setting | Value | Notes |
+|---------|-------|-------|
+| TX/RX `maxburst` | **8** | Heavy channels (0, 1) support MSIZE=8 |
+| DMACTRL threshold | **8** | Must match burst size (PR #7190) |
+| DMA period size | **4096 B** | Balances interrupt overhead vs latency |
 
 **Data paths:**
 
@@ -278,17 +266,19 @@ SRAM mode:
   Host CPU ←─PCIe──── SRAM ring buffer (ioremap BAR2)
 ```
 
-Ring buffer layout (16 KB, 2 periods × 4 KB):
+DRAM ring buffer layout (64 KB coherent allocation):
 ```
-Offset 0x0000   8,192 B   TX ring (2 × 4 KB periods)
-Offset 0x2000   8,192 B   RX ring (2 × 4 KB periods)
+Offset 0x0000   32,768 B  TX ring (8 × 4 KB periods)
+Offset 0x8000   32,768 B  RX ring (8 × 4 KB periods)
+```
+
+SRAM ring buffer layout (within safe region past firmware dynamic state):
+```
+Offset 0xA200   8,192 B   TX ring (2 × 4 KB periods)
+Offset 0xC200   8,192 B   RX ring (2 × 4 KB periods)
 ```
 
 Implementation: `kmod/rp1_pio_sram.ko` + `sram_dma_bench.c`
-
-**Conclusion:** The only path to >42 MB/s is Phase 4 (M3 Core 1), which can
-access both SRAM and PIO FIFOs in single clock cycles. However, Phase 3 with
-proper DMA configuration already exceeds 42 MB/s using SRAM ring buffers.
 
 ### Phase 4: M3 Core 1 Bridge (6.89 MB/s — hardware-limited)
 
@@ -312,7 +302,7 @@ takes **~54 cycles (~270 ns at 200 MHz)**, not 1 cycle as assumed.
 
 This means the CPU-polled approach is hardware-limited to:
 - 200 MHz / (54 cycles × 2 accesses/word) ≈ 1.85 Mwords/s ≈ **7.4 MB/s theoretical max**
-- Measured: **6.88 MB/s** (matches — overhead from loop instructions + SRAM load/store)
+- Measured: **6.89 MB/s** (matches — overhead from loop instructions + SRAM load/store)
 
 **Measured results:**
 
@@ -390,7 +380,7 @@ asm volatile("sev");
 - [G33KatWork/RP1-Reverse-Engineering](https://github.com/G33KatWork/RP1-Reverse-Engineering) — Core 1 bootstrap
 - [raspberrypi/rp1-pio kernel driver](https://github.com/raspberrypi/linux) — DMA/PIO interface
 - pelwell's optimization guidance: "move DMA buffers to shared SRAM, cyclic DMA"
-- cleverca22's M3 Core 1 throughput measurement: ~66 MB/s
+- cleverca22's host DMA throughput measurement: ~66 MB/s (custom driver, RX-only)
 
 ## Existing Code to Reuse
 
@@ -425,13 +415,12 @@ on SM0 unless noted. Duration 3 seconds per test.
    framework overhead. Uses a 1-instruction PIO generator (`in null, 32`).
 
 2. **Cyclic DMA with SRAM rings achieves the highest bidirectional throughput**
-   (54 MB/s TX), exceeding the standard kernel DMA baseline by 29%. Fixed:
-   SRAM rings moved past firmware dynamic region (0x9F48-0xA150) to prevent
-   DMA overwriting firmware state. Now reliable (3/3 back-to-back passes).
+   (54 MB/s TX), exceeding the standard kernel DMA baseline by 29%. SRAM rings
+   are placed at 0xA200+ to avoid the firmware dynamic region (0x9F48-0xA150).
 
 3. **Cyclic DMA with DRAM rings is production-viable** at 40 MB/s TX, matching
    the standard kernel baseline. Passed 100/100 reliability sweep with data
-   verification after fixing DREQ-before-terminate and FIFO clear issues.
+   verification.
 
 4. **M3 Core 1 bounce buffer is NOT faster than DMA.** The APB bridge between
    M3 and PIO takes ~54 cycles per register access (~270 ns), limiting
@@ -445,11 +434,6 @@ on SM0 unless noted. Duration 3 seconds per test.
    RX requires read completions (wait for data). Removing TX contention
    boosts RX from 36 to 56 MB/s (56% improvement).
 
-7. **SRAM DMA firmware corruption was a simple address overlap (FIXED).**
-   TX ring at 0x8B00 extended into firmware's active dynamic region at
-   0x9F48. Moving rings to 0xA200+ eliminated the issue entirely.
-   SRAM DMA now runs repeatedly without corruption or power cycling.
-
 ### Hardware Limitations Discovered
 
 | Finding | Impact |
@@ -458,14 +442,14 @@ on SM0 unless noted. Duration 3 seconds per test.
 | FSTAT at 0xF0000000 does not dynamically update | Cannot poll RXEMPTY from Core 1 |
 | 0xF0000000 is 1.41× faster than 0x40178000 | Use 0xF0 alias for all M3 PIO access |
 | Core 0 firmware interference at word 62 | ~1 error per 10 passes on Core 1 path |
-| SRAM DMA corrupted firmware state (FIXED) | Rings overlapped FW dynamic region; moved to 0xA200+ |
-| DREQ must be disabled before DMA terminate | Otherwise kernel panic after ~15 cycles |
+| SRAM 0x9F48-0xA150 is firmware dynamic state | DMA rings must be placed at 0xA200+ |
+| DREQ must be disabled before DMA terminate | Prevents dw-axi-dma descriptor pool corruption |
 
 ### Tool Summary
 
 | Tool | Purpose |
 |------|---------|
-| `sram_dma_bench` | Cyclic DMA benchmark (--dram, --sram, --piolib, --json) |
+| `sram_dma_bench` | Cyclic DMA benchmark (--dram, --sram, --piolib, --tx-only, --rx-only, --json) |
 | `m3_bridge_bench` | M3 Core 1 SRAM↔FIFO bridge benchmark |
 | `run_tests.sh` | Automated multi-iteration test with statistics |
 | `sram_probe` | SRAM access verification and bandwidth |
@@ -473,6 +457,7 @@ on SM0 unless noted. Duration 3 seconds per test.
 | `sram_addr_probe` | DMA-accessible SRAM address discovery |
 | `sram_monitor` | Monitor SRAM for dynamic firmware changes |
 | `sram_region_test` | Safe SRAM region detection |
+| `sram_corruption_test` | SRAM DMA firmware health diagnostic |
 | `pio_unclaim` | Release PIO state machine claims |
 | `core1_launcher` | M3 Core 1 bootstrap and monitoring |
 | `kmod/rp1_pio_sram.ko` | Kernel module for cyclic DMA with SRAM/DRAM rings |
