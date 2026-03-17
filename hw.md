@@ -185,14 +185,42 @@ The Digilent Pmod HAT Adapter (also branded as DesignSpark Pmod HAT, RS part 144
 plugs into the Raspberry Pi 40-pin GPIO header and provides three 2x6-pin Pmod host
 connectors: **JA**, **JB**, and **JC**.
 
-Reference manual: https://digilent.com/reference/add-ons/pmod-hat/reference-manual
+References:
+- [Digilent PMOD HAT Reference Manual](https://digilent.com/reference/add-ons/pmod-hat/reference-manual)
+- [Digilent PMOD HAT Schematic](https://digilent.com/reference/_media/learn/documentation/schematics/pmod_hat_adapter_sch.pdf)
+- [fpgas.online PMOD HAT documentation](https://github.com/fpgas-online/fpgas.online-test-designs/blob/main/docs/hardware/rpi-hat-pmod.md)
 
-Key specifications:
-- 3 x 2x6-pin (12-pin) Pmod host connectors
-- 3.3V I/O on all Pmod pins (directly connected to RPi GPIOs, which are 3.3V)
-- 16 mA current limit per Pmod GPIO
-- 5V barrel jack for external power supply
-- VCC on Pmod pins is 3.3V from the RPi's 3.3V rail
+| Parameter | Value |
+|-----------|-------|
+| PMOD ports | 3x 12-pin (JA, JB, JC) — 24 signal pins total |
+| Logic voltage | 3.3V (no level shifters — direct RPi GPIO connection) |
+| Max current per pin | 16 mA (RPi BCM2835/BCM2711/BCM2712 limit) |
+| Total GPIO current | ~50 mA across all pins (RPi limitation) |
+| VCC on PMOD connectors | 3.3V from RPi 3.3V rail |
+| Unused GPIO | 5 pins (GPIO22, GPIO23, GPIO24, GPIO25, GPIO27) |
+
+### PMOD Port Types
+
+Each port's top row (pins 1-4) conforms to a standard [PMOD interface type](https://digilent.com/reference/pmod/specification);
+bottom rows provide RPi hardware peripherals but not in standard PMOD type positions.
+
+| Port | Top Row (pins 1-4) | Bottom Row (pins 7-10) |
+|------|--------------------|------------------------|
+| JA | **Type 2 (SPI)** — chip select CE0 (GPIO8) | PCM/I2S signals |
+| JB | **Type 2 (SPI)** — chip select CE1 (GPIO7) | I2C1 + GPIO |
+| JC | **Type 4 (UART)** — UART0 (CTS/TXD/RXD/RTS) | GPCLK + PWM |
+
+### Shared GPIO Lines (JA and JB)
+
+**JA pins 2-4 and JB pins 2-4 are the same physical GPIO lines** (GPIO10, GPIO9,
+GPIO11 = SPI0 MOSI/MISO/SCLK). They share a single SPI bus with different chip
+selects (JA1=CE0, JB1=CE1). When using these ports for general GPIO (not SPI),
+driving pin 2 on JA also drives pin 2 on JB — and vice versa.
+
+When two RPi devices are connected via PMOD cables (JA-to-JA, JB-to-JB), this
+creates an additional constraint: GPIO9, GPIO10, and GPIO11 on each device are
+effectively shorted together through **both** the JA cable and the JB cable.
+Each of these three signals has two parallel electrical paths between devices.
 
 ## GPIO Pin Mapping
 
@@ -278,21 +306,16 @@ RPi5 GPIO header (discovered using `discover_gpio_pairs.py`):
 These loopback pairs can be used for self-test purposes (driving one pin and
 reading the other to verify GPIO functionality without external hardware).
 
-### Shared Bus Constraints
-
-**SPI0 bus sharing:** JA (pins 1-4) and JB (pins 1-4) share the SPI0 MOSI, MISO, and
-SCLK lines (GPIO10, GPIO9, GPIO11). They differ only in chip select: JA uses CE0
-(GPIO8) and JB uses CE1 (GPIO7). This means:
-- Two SPI devices can be used simultaneously (one on JA, one on JB) using different
-  chip selects
-- If JA or JB is used for non-SPI GPIO purposes, the shared pins conflict and the
-  other port's top row becomes unusable
+### Bus Constraints
 
 **I2C1 bus:** JB pins 9-10 carry I2C1 (GPIO2/SDA, GPIO3/SCL). These pins have
 hardware 1.8kΩ pull-up resistors to 3.3V on the RPi board itself.
 
 **UART0:** JC pins 1-4 carry the primary UART. On RPi4, this is the PL011 UART
 (typically `/dev/ttyAMA0` when enabled). On RPi5, UART routing differs due to RP1.
+
+For the full SPI0 bus sharing explanation (JA/JB pins 2-4), see
+[Shared GPIO Lines](#shared-gpio-lines-ja-and-jb) above.
 
 ---
 
