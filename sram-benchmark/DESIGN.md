@@ -409,31 +409,40 @@ Throughput is bidirectional (TX word written, NOT'd word read back).
 
 | Approach | TX MB/s | RX MB/s | Reliability | Bottleneck |
 |----------|---------|---------|-------------|------------|
+| **RX-only DMA, DRAM (cleverca22)** | — | **55.79** | 100% | **DMA handshake** |
+| TX-only DMA, DRAM (kmod) | 40.91 | — | 100% | PCIe posted writes |
 | Standard kernel DMA (baseline) | ~42 | ~42 | 100% | PCIe + APB handshake |
-| Cyclic DMA, DRAM rings (kmod) | 40.81 | 36.28 | 100/100 passes | PCIe read completions |
-| Cyclic DMA, SRAM rings (kmod) | **54.15** | **45.13** | N/A (firmware corruption) | APB DREQ handshake |
+| Cyclic DMA, DRAM bidirectional | 40.81 | 36.28 | 100/100 passes | PCIe read completions |
+| Cyclic DMA, SRAM bidirectional | **54.15** | **45.13** | N/A (firmware corruption) | APB DREQ handshake |
 | piolib ioctl DMA | 18.30 | 18.30 | 100% | ioctl overhead per xfer |
 | M3 Core 1 CPU-polled bridge | 6.89 | 6.89 | ~91% (index 62 errors) | APB bridge latency |
+| cleverca22 custom driver (ref) | — | ~66 | dropping samples | Direct register DMA |
 
 ### Key Findings
 
-1. **Cyclic DMA with SRAM rings achieves the highest throughput** (54 MB/s TX),
-   exceeding the standard kernel DMA baseline by 29%. However, SRAM DMA mode
-   corrupts RP1 firmware state, requiring PoE power cycle recovery.
+1. **Unidirectional RX-only DMA achieves 55.79 MB/s** — 85% of cleverca22's
+   66 MB/s custom driver result. The remaining gap is kernel dmaengine
+   framework overhead. Uses a 1-instruction PIO generator (`in null, 32`).
 
-2. **Cyclic DMA with DRAM rings is production-viable** at 40 MB/s TX, matching
+2. **Cyclic DMA with SRAM rings achieves the highest bidirectional throughput**
+   (54 MB/s TX), exceeding the standard kernel DMA baseline by 29%. However,
+   SRAM DMA mode corrupts RP1 firmware state, requiring PoE power cycle.
+
+3. **Cyclic DMA with DRAM rings is production-viable** at 40 MB/s TX, matching
    the standard kernel baseline. Passed 100/100 reliability sweep with data
    verification after fixing DREQ-before-terminate and FIFO clear issues.
 
-3. **M3 Core 1 bounce buffer is NOT faster than DMA.** The APB bridge between
+4. **M3 Core 1 bounce buffer is NOT faster than DMA.** The APB bridge between
    M3 and PIO takes ~54 cycles per register access (~270 ns), limiting
    CPU-polled throughput to ~7 MB/s — 6× slower than cyclic DMA.
 
-4. **TX/RX asymmetry is inherent.** TX uses posted writes (fire-and-forget),
-   RX requires read completions (wait for data). Ratio is consistently ~1.12×.
+5. **DMA handshake overhead is the dominant bottleneck.** burst=4 gives 33 MB/s,
+   burst=8 gives 56 MB/s (70% improvement). Buffer size has no effect.
+   pelwell's "~70 bus cycles per handshake" is confirmed.
 
-5. **FIFO joining is not applicable** for bidirectional loopback — both TX and
-   RX FIFOs are needed simultaneously.
+6. **TX/RX asymmetry is inherent.** TX uses posted writes (fire-and-forget),
+   RX requires read completions (wait for data). Removing TX contention
+   boosts RX from 36 to 56 MB/s (55% improvement).
 
 ### Hardware Limitations Discovered
 
