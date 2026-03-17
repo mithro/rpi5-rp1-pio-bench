@@ -12,7 +12,13 @@ The RP1 has **two different PIO base addresses** depending on who is accessing:
 | M3 Core 0/1 (RP1 internal bus) | `0x40178000` | FIFOs only (TX + RX) |
 | Linux host (PCIe BAR) | `0xc0_40178000` | FIFOs only (TX + RX) |
 
-**Key finding:** `0xF0000000` is the full PIO register space, accessible only from RP1 M3 cores. `0x40178000` is a FIFO-only window accessible from both M3 and the host (via PCIe). The host (Linux/piolib) cannot access CTRL, FSTAT, SM configuration, or instruction memory directly -- those go through the M3 firmware mailbox protocol.
+**Key findings:**
+- `0xF0000000` is the full PIO register space, accessible only from RP1 M3 cores.
+- `0x40178000` is a FIFO-only window accessible from both M3 and the host (via PCIe).
+- The host (Linux/piolib) cannot access CTRL, FSTAT, SM configuration, or instruction memory directly -- those go through the M3 firmware mailbox protocol.
+- `0xF0000000` is **1.41× faster** than `0x40178000` for register reads from M3 (6.7M vs 4.76M reads/sec). Source: `m3core1/pio_addr_test.s` benchmark.
+- Each PIO register access from M3 takes **~54 cycles (~270 ns at 200 MHz)** via the APB bus bridge — NOT single-cycle. Source: `m3core1/pio_bridge.s` throughput measurements.
+- **FSTAT at `0xF0000000` does NOT dynamically update** when FIFO state changes. Polling RXEMPTY/TXFULL from Core 1 hangs indefinitely. FSTAT only reflects a static snapshot. Source: `m3core1/pio_bridge.s` FSTAT polling test (2026-03-17).
 
 ## Complete Register Map at 0xF0000000
 
@@ -142,26 +148,27 @@ Bit  Field       Description
 - **RXEMPTY for SM0**: FSTAT bit 8 (`1 << 8 = 0x00000100`)
 - **RXFULL for SM0**: FSTAT bit 0 (`1 << 0 = 0x00000001`)
 
-**Polling pattern (from M3 firmware):**
+**FIFO access pattern (from M3 Core 1 firmware):**
+
+**WARNING:** Do NOT poll FSTAT — it does not dynamically update from Core 1.
+Write to TXF and read from RXF directly. The ~270 ns APB bus latency per
+register access provides sufficient delay for PIO to process between accesses.
+
 ```c
 #define PIO_BASE        0xF0000000
-#define FSTAT_OFFSET    0x04
 #define TXF0_OFFSET     0x14
 #define RXF0_OFFSET     0x24
 
-#define FSTAT_TXFULL_SM0  (1 << 16)
-#define FSTAT_RXEMPTY_SM0 (1 << 8)
-
 volatile uint32_t *pio = (volatile uint32_t *)PIO_BASE;
 
-// Wait for TX FIFO not full, then write
-while (pio[FSTAT_OFFSET/4] & FSTAT_TXFULL_SM0) {}
+// Write to TX FIFO, then read from RX FIFO
+// PIO processes in 3 cycles (15 ns), well within the ~270 ns bus latency
 pio[TXF0_OFFSET/4] = data;
-
-// Wait for RX FIFO not empty, then read
-while (pio[FSTAT_OFFSET/4] & FSTAT_RXEMPTY_SM0) {}
 uint32_t val = pio[RXF0_OFFSET/4];
 ```
+
+Source: Verified in `m3core1/pio_bridge.s` — FSTAT polling hangs Core 1;
+direct write-then-read achieves 6.89 MB/s (2026-03-17 benchmark).
 
 ## RP1 vs RP2040 Differences Summary
 
@@ -181,22 +188,23 @@ uint32_t val = pio[RXF0_OFFSET/4];
 
 ## Host-Configures, Core 1 Accesses FIFOs: The Recommended Pattern
 
-Based on the architecture analysis, the **recommended approach** for Core 1 PIO FIFO access:
+Based on architecture analysis and empirical testing (`m3core1/pio_bridge.s`):
 
-1. **Host configures PIO via piolib** (ioctls -> firmware mailbox -> Core 0 firmware writes to `0xF0000000` registers)
+1. **Host configures PIO via piolib** (ioctls → firmware mailbox → Core 0 firmware writes to `0xF0000000` registers)
    - Load PIO program (instruction memory)
    - Configure SM (CLKDIV, EXECCTRL, SHIFTCTRL, PINCTRL)
    - Configure GPIO pins
    - Enable SM
+   - **PIO setup must happen AFTER Core 1 launch** — the `trigger_pio_mailbox()` call during SEV bootstrap causes Core 0 firmware to refresh INSTR_MEM, overwriting any prior program loads.
 
-2. **Core 1 firmware accesses FIFOs directly** at either address:
-   - `0xF0000000 + 0x14` (TXF0) / `0xF0000000 + 0x24` (RXF0) -- full PIO space
-   - `0x40178000` (TXF0) / `0x40178010` (RXF0) -- FIFO-only window
-   - Both should work; `0xF0000000` also gives access to FSTAT for polling
+2. **Core 1 firmware accesses FIFOs directly** at `0xF0000000` (preferred, 1.41× faster):
+   - `0xF0000000 + 0x14` (TXF0) / `0xF0000000 + 0x24` (RXF0)
+   - Each FIFO read/write takes ~54 cycles (~270 ns) via the APB bus bridge
+   - Achieves ~6.89 MB/s CPU-polled throughput (hardware-limited)
 
-3. **Core 1 polls FSTAT at `0xF0000004`** to check TXFULL/RXEMPTY before writing/reading
+3. **WARNING: Do NOT poll FSTAT from Core 1.** FSTAT at `0xF0000004` does not dynamically update when FIFO state changes. Polling RXEMPTY or TXFULL causes Core 1 to hang indefinitely. The APB bus latency (~270 ns per register access) provides sufficient implicit delay for PIO to complete processing between a TXF write and RXF read.
 
-**Important:** The host (piolib) configures PIO via firmware messages to Core 0. Core 1 does NOT need to configure PIO -- it just reads/writes the FIFOs and polls FSTAT. This means the existing piolib-based setup code can remain unchanged; only the FIFO access path changes from ioctl to direct M3 register access.
+**Important:** Core 1 CPU-polled FIFO access (6.89 MB/s) is 6× slower than cyclic DMA (40-54 MB/s). Use DMA for high-throughput applications. Core 1 FIFO access is useful for low-latency control or data that must be preprocessed before DMA.
 
 ## blink_core1.s Analysis (MichaelBell)
 
@@ -206,7 +214,7 @@ The `blink_core1.s` example does NOT use PIO -- it directly manipulates GPIO via
 - `0x400E2000` -- GPIO output enable / output value (SYS_RIO block)
 - Initial SP: `0x10003FFC` (PROC-local SRAM, not shared SRAM)
 
-This confirms M3 Core 1 can access peripherals at `0x40xxxxxx` addresses. The PIO registers at `0xF0000000` should also be accessible (it's the same internal bus, different address range).
+This confirms M3 Core 1 can access peripherals at `0x40xxxxxx` addresses. PIO registers at `0xF0000000` are confirmed accessible from Core 1 (verified by `m3core1/pio_fifo_test.s` and `m3core1/pio_addr_test.s`).
 
 ## core1_test.c Analysis (MichaelBell)
 

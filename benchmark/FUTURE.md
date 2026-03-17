@@ -18,7 +18,7 @@ Use the existing Pmod jumper cable connections between RPi5 and RPi4 (documented
 - RPi4 reads the data (via GPIO or SPI peripheral) and responds
 - RPi5 PIO reads the response back
 
-This tests real-world signal integrity over the Pmod jumper cables and exercises the complete external IO path. The RPi4 side would use standard GPIO or SPI since it has no PIO block.
+This tests real-world signal integrity over the Pmod jumper cables and exercises the complete external IO path.
 
 **Available connections:** 21 unique GPIO connections between RPi5 and RPi4 across Pmod connectors JA, JB, JC (see `hw.md` for complete pin mapping).
 
@@ -30,11 +30,7 @@ The current benchmark uses pthreads to work around `pio_sm_xfer_data()` being a 
 - Enable more precise throughput measurement
 - Simplify the code
 
-## 4. Joined FIFO Single-Direction Benchmarks
-
-Separate TX-only and RX-only benchmarks using `PIO_FIFO_JOIN_TX` or `PIO_FIFO_JOIN_RX` to double the FIFO depth to 16 entries. This would measure maximum single-direction throughput, which should be higher than the bidirectional loopback since joined FIFOs provide more buffering for burst absorption.
-
-## 5. Transfer Size Sweep
+## 4. Transfer Size Sweep
 
 Automated sweep from 256 bytes to 4 MB to characterise:
 
@@ -44,11 +40,10 @@ Automated sweep from 256 bytes to 4 MB to characterise:
 
 This would produce a transfer-size vs throughput curve useful for tuning real applications.
 
-## 6. M3 Core Bounce Buffer
+## Completed Investigations
 
-If official support for user code on RP1's Cortex-M3 cores becomes available, implement a bounce buffer strategy:
+The following were previously listed as future work and have been completed:
 
-- M3 core reads PIO FIFO with single-cycle latency into shared SRAM
-- DMA transfers from shared SRAM (wider bus) to host memory
+- **Joined FIFO single-direction benchmarks:** FIFO joining is not applicable for bidirectional loopback (both TX and RX FIFOs needed simultaneously). Unidirectional mode (`--tx-only`/`--rx-only`) achieves higher throughput without joining — RX-only reaches 55.97 MB/s. See `sram-benchmark/DESIGN.md`.
 
-This bypasses the 70-cycle DMA handshake bottleneck entirely. Community experiments suggest this path can reach ~66 MB/s. See `rp1-dma-2.md` for architecture details.
+- **M3 Core bounce buffer:** Implemented and benchmarked (`m3core1/pio_bridge.s`). PIO FIFO access from M3 Core 1 is NOT single-cycle — it takes ~54 cycles (~270 ns) via the APB bus bridge, limiting CPU-polled throughput to 6.89 MB/s. This is 6× slower than cyclic DMA (40-54 MB/s). cleverca22's ~66 MB/s was achieved with host-side DMA ([source](https://github.com/cleverca22/libsigrok/commit/e3783bac8176e7454863b37723ab6d8a3f99731a)), not M3 Core 1 polling. See `sram-benchmark/DESIGN.md` for full results.

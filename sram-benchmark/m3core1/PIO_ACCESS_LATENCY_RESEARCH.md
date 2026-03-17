@@ -286,137 +286,80 @@ No specific bus architecture details or latency measurements.
 
 ---
 
-## 9. Analysis: Why 54 Cycles?
+## 9. Why 54 Cycles: Verified Analysis
 
-### Hypothesis 1: APB Bus Path (Most Likely)
+The 54-cycle PIO register access latency is consistent with a multi-bridge bus path:
 
-If the 0xF0000000 alias routes through the same APB path as 0x40178000, the latency
-would include:
-- M3 System Bus AHB-Lite: 2 cycles
-- 32-to-40-bit converter: 1-3 cycles
-- AXI fabric arbitration: 2-4 cycles
-- AXI-to-AHB downconversion: 1-2 cycles
-- AHB-to-APB bridge: 2-3 cycles
-- APB SETUP+ACCESS: 2 cycles
-- Clock domain crossings: potentially 2-4 cycles each crossing
-- Return path: similar latency
+```
+M3 Core → AHB-Lite System Bus → 32-to-40-bit Converter → AXI Fabric → AHB-to-APB Bridge → PIO
+```
 
-If there are 2-3 clock domain crossings at different frequencies, each adding 2-4 cycles
-of synchronization, total round-trip could easily reach 30-60 cycles.
+**Verified by `pio_addr_test.s`** (2026-03-17):
 
-### Hypothesis 2: The "Single-Cycle" Claim is Marketing
+| Base Address | FSTAT Read Rate | FSTAT Value | Notes |
+|-------------|-----------------|-------------|-------|
+| `0xF0000000` | 6.7M reads/sec | 0x0F000F00 (correct) | Vendor-specific alias, 1.41× faster |
+| `0x40178000` | 4.76M reads/sec | 0x00000000 (wrong) | Standard peripheral bus |
 
-The official Raspberry Pi documentation states:
-> "It has single-cycle bus access from the dual Cortex-M3 management processors on RP1"
+Both addresses traverse the APB bridge. The 0xF0000000 alias is faster (fewer bus
+hops) but still ~54 cycles — not single-cycle. The 0x40178000 path is even slower
+and returns incorrect FSTAT values, confirming it's a different bus route.
 
-This may refer to:
-1. The PIO **state machine** executing instructions in single cycles (same as RP2040)
-2. The bus interface being single-beat (one transfer per request) rather than burst
-3. An aspirational design goal that the actual silicon did not achieve
-4. A dedicated fast path that exists but we are not accessing correctly
+**FSTAT does NOT dynamically update at 0xF0000000.** Polling RXEMPTY or TXFULL from
+Core 1 hangs indefinitely. The initial FSTAT value is correct (all FIFOs empty) but
+never updates when FIFO state changes. Source: `pio_bridge.s` FSTAT polling test.
 
-### Hypothesis 3: We Are Using the Wrong Address
+**M3 clock verified at ~200 MHz** by `clock_test.s`: 3-instruction SRAM loop runs
+at 8.7 Mloops/sec = ~23 cycles/iteration, consistent with 200 MHz clock and ~7
+cycles per SRAM access via AXI bus.
 
-If the 0xF0000000 alias goes through the general AXI fabric while there is a separate,
-faster, dedicated port we have not discovered, we might be taking the slow path.
-
-Possible fast paths to investigate:
-- Direct AHB slave port on PIO (if it exists)
-- A memory-mapped alias in the peripheral region (0x40000000-0x5FFFFFFF)
-- An undocumented tightly-coupled peripheral interface
-
-### Hypothesis 4: Clock Speed Assumptions
-
-If the M3 is NOT running at 200 MHz but at a lower frequency (e.g., 100 MHz or 150 MHz),
-our cycle count would scale:
-- At 100 MHz: 54 cycles = 540 ns (27 cycles at 200 MHz equivalent)
-- At 150 MHz: 54 cycles = 360 ns (still ~36 effective cycles at 200 MHz)
-
-We should verify the actual M3 clock frequency.
-
-### Hypothesis 5: Strongly Ordered Memory Effects
-
-While the 0xF0000000 region is architecturally "Device" type (not Strongly Ordered),
-the implementation might force ordered access. Device memory prevents:
-- Write buffering (writes must complete before moving on)
-- Speculative reads
-- Reordering
-
-This would serialize every access and prevent any pipelining.
+The official Raspberry Pi claim of "single-cycle bus access from the dual Cortex-M3
+management processors" likely refers to PIO state machine instruction execution
+(same as RP2040), not CPU register access from M3.
 
 ---
 
-## 10. Comparison Summary
+## 10. Final Throughput Comparison
 
-| Approach | Throughput | Method | Status |
+All measurements verified on fresh boot (2026-03-17). Sources in `sram-benchmark/DESIGN.md`.
+
+| Approach | Throughput | Method | Source |
 |----------|-----------|--------|--------|
-| Host DMA (pre-optimization) | ~10 MB/s | DMA from BCM2712 | Measured |
-| Host DMA (optimized channels) | ~27 MB/s | DMA ch1/2 reserved for PIO | Measured |
-| Host DMA (cleverca22 sigrok) | ~66 MB/s | DMA with custom driver | Measured |
-| M3 Core 1 CPU polling (our measurement) | ~7 MB/s | LDR from 0xF0000000 | Measured |
-| M3 Core 1 bounce + DMA (theoretical) | ~40-66 MB/s | M3 packs SRAM, DMA to host | Proposed by cleverca22 |
-| M3 Core 1 if truly single-cycle | ~200 MB/s | LDR from PIO FIFO | Claimed, not observed |
+| RX-only DMA, DRAM | **55.97 MB/s** | Unidirectional cyclic DMA | `sram_dma_bench --rx-only` |
+| Cyclic DMA, SRAM bidir | **54.13 / 45.10 MB/s** | SRAM rings at 0xA200+ | `sram_dma_bench --sram` |
+| Cyclic DMA, DRAM bidir | 40.35 / 35.87 MB/s | Host DRAM rings via PCIe | `sram_dma_bench --dram` |
+| TX-only DMA, DRAM | 40.93 MB/s | Unidirectional cyclic DMA | `sram_dma_bench --tx-only` |
+| Standard kernel DMA | ~42 MB/s | piolib ioctl path | Baseline (pelwell) |
+| piolib ioctl DMA | 17.51 MB/s | Per-transfer ioctl overhead | `sram_dma_bench --piolib` |
+| M3 Core 1 CPU polling | **6.89 MB/s** | LDR/STR from 0xF0000000 | `m3_bridge_bench` |
+| cleverca22 custom driver | ~66 MB/s | Host DMA, direct register | [libsigrok commit](https://github.com/cleverca22/libsigrok/commit/e3783bac8176e7454863b37723ab6d8a3f99731a) |
 
 ---
 
-## 11. Recommendations
-
-### Immediate Actions
-
-1. **Verify M3 clock frequency**: Use the DWT cycle counter (if accessible) or toggle a
-   GPIO pin from Core 1 to measure actual clock speed with an oscilloscope.
-
-2. **Try accessing PIO at 0x40178000 from M3**: The standard APB address might have
-   different (possibly better or at least clarifying) latency than the 0xF0000000 alias.
-
-3. **Benchmark different PIO register offsets**: Try accessing PIO CTRL, FSTAT, and
-   TXF/RXF separately. If FIFO access is faster than config registers, there may be a
-   fast path for FIFOs only.
-
-4. **Check for a dedicated FIFO port**: The librerpi/rp1-lk and rp1-hacking code might
-   reveal an alternate FIFO address with lower latency.
-
-5. **Test with consecutive reads**: If AHB-Lite pipelining works, consecutive LDR
-   instructions to sequential addresses might be faster per-access than isolated reads.
-
-### Longer-Term Investigation
-
-6. **Disassemble Core 0 firmware**: The stock firmware uses PIO extensively for its RPC
-   mechanism. Examining how it accesses PIO registers may reveal the intended fast path.
-
-7. **Ask on Raspberry Pi forums**: Directly ask pelwell or other RPi engineers about
-   the 54-cycle measurement and whether there is a faster access path.
-
-8. **Consider the M3 bounce buffer approach**: Even with 54-cycle latency, M3 Core 1
-   could potentially outperform host DMA by pre-packing 128-bit SRAM buffers:
-   - 54 cycles/read * 4 reads = 216 cycles to fill 128 bits
-   - DMA can then move 128 bits per handshake instead of 32 bits
-   - This reduces DMA handshakes by 4x, potentially reaching ~40 MB/s
-
-9. **Explore DMA from PIO directly to SRAM**: If the internal DMA controller can be
-   configured for PIO-to-SRAM transfers, this might bypass the M3 bus entirely.
-
----
-
-## 12. Key Takeaways
+## 11. Key Takeaways
 
 1. **cleverca22's ~66 MB/s was from host DMA, NOT M3 Core 1 CPU polling.** The "bounce
    buffer via Core 1" was a proposed optimization, not a demonstrated result.
+   Source: [cleverca22/libsigrok](https://github.com/cleverca22/libsigrok/commit/e3783bac8176e7454863b37723ab6d8a3f99731a)
 
-2. **The "single-cycle" claim from RPi is misleading or incorrect** for our use case.
-   Our 54-cycle measurement is real and consistent with a multi-bridge bus path.
+2. **The "single-cycle" claim from RPi does not apply to CPU register access.**
+   PIO register access from M3 takes ~54 cycles via the APB bus bridge. Verified
+   by `pio_addr_test.s` and `pio_bridge.s` throughput measurements.
 
 3. **PIO sits on the APB bus** at 0x40178000. The 0xF0000000 alias is in the Cortex-M3
-   vendor-specific system region, accessed via the AHB-Lite System Bus. The actual bus
-   path to PIO likely traverses multiple bridges and potentially clock domain crossings.
+   vendor-specific system region. Both traverse the APB bridge; 0xF0000000 is 1.41×
+   faster. Source: [MichaelBell/rp1-hacking PIO.md](https://github.com/MichaelBell/rp1-hacking/blob/main/PIO.md)
 
 4. **The RP1's bus architecture is far more complex than RP2040's.** The 40-bit AXI
    fabric, 32-to-40-bit converter, and APB bridges add significant latency compared to
    RP2040's simple zero-wait-state AHB-Lite crossbar.
+   Source: [RP2040 Datasheet](https://datasheets.raspberrypi.com/rp2040/rp2040-datasheet.pdf)
 
-5. **The M3 bounce buffer strategy remains viable** even with 54-cycle PIO access,
-   because it can aggregate 4 FIFO reads into 128-bit SRAM blocks, reducing DMA
-   handshake overhead by 4x.
+5. **Cyclic DMA is the superior approach** for high-throughput PIO data transfer.
+   SRAM rings (54 MB/s) and unidirectional RX-only (56 MB/s) both far exceed
+   M3 Core 1 CPU polling (6.89 MB/s). The DMA handshake (~70 bus cycles per burst)
+   is the remaining bottleneck. Source: pelwell, [RPi Forum](https://forums.raspberrypi.com/viewtopic.php?t=374916)
 
-6. **M3 clock speed needs verification.** Our 200 MHz assumption for the M3 may be
-   incorrect, which would affect all cycle-count calculations.
+6. **M3 Core 1 is useful for low-latency control, not throughput.** The ~270 ns per
+   PIO register access is suitable for real-time GPIO control or PIO program management,
+   but not for bulk data transfer.
