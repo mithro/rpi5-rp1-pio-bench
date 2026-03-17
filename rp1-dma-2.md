@@ -16,7 +16,7 @@ RP1 is a custom ASIC fabricated on TSMC 40nm, containing dual Cortex-M3 cores, a
 | Joined FIFO depth | 8 entries | **16 entries** |
 | Instruction set | 9 instructions, 1 cycle each | **Identical** |
 | System clock | 125–133 MHz | **200 MHz** |
-| Host register access | Direct (single-cycle) | **FIFOs only** over PCIe; config via M3 firmware mailbox |
+| Host register access | Direct (single-cycle) | **FIFOs only** over PCIe; config via M3 firmware mailbox. M3 access is ~54 cycles via APB bridge ([measured](sram-benchmark/m3core1/PIO_ACCESS_LATENCY_RESEARCH.md)), not single-cycle. |
 | DMA handshake latency | ~4 cycles | **~70 bus cycles** |
 
 The PIO instruction set — `JMP`, `WAIT`, `IN`, `OUT`, `PUSH`, `PULL`, `MOV`, `IRQ`, `SET` — is binary-compatible at the assembly level. RP1 adds two new per-SM registers (`SMx_DMATX` and `SMx_DMARX`) for DMA request control that don't exist on RP2040. The register layout otherwise mirrors RP2040 datasheet section 3.7, with wider FIFO-level fields in `FSTAT`/`FLEVEL` to accommodate the 8-deep FIFOs.
@@ -37,14 +37,14 @@ The address translation from RP1 peripheral addresses to BCM2712 physical addres
 
 RP1 supports **RP2040-style atomic register access** through address aliasing: normal read/write at `+0x0000`, atomic XOR at `+0x1000`, atomic SET at `+0x2000`, atomic CLEAR at `+0x3000`. This is critical for avoiding costly PCIe read-modify-write round-trips that would double latency.
 
-Internally, RP1's Cortex-M3 cores access PIO at a private address `0xF000_0000` with single-cycle latency. This private address space is inaccessible over PCIe — it's where the firmware performs all PIO configuration on behalf of host requests.
+Internally, RP1's Cortex-M3 cores access PIO at a private address `0xF000_0000`. Despite Raspberry Pi's documentation claiming "single-cycle bus access", measured latency is **~54 cycles (~270 ns)** per register access via the APB bus bridge ([source](sram-benchmark/m3core1/PIO_ACCESS_LATENCY_RESEARCH.md)). This private address space is inaccessible over PCIe — it's where the firmware performs all PIO configuration on behalf of host requests.
 
 ```
 BCM2712 (SoC)                              RP1 (Southbridge)
 ┌──────────────────────┐                   ┌────────────────────────────────┐
 │ 4× Cortex-A76        │                   │  2× Cortex-M3 (200 MHz)       │
 │ (2.4 GHz)            │                   │   └─ PIO regs @ 0xF000_0000   │
-│                      │   PCIe 2.0 x4     │      (single-cycle access)     │
+│                      │   PCIe 2.0 x4     │      (~54 cycles via APB)      │
 │ LPDDR4X DRAM    ◄────┼───────────────────┼── RP1 DMA (8-ch, AXI)         │
 │                      │   ~2 GB/s bw      │      ↕ DREQ handshake         │
 │ BCM2712 DMA40        │   ~1 μs latency   │  PIO Block (1 instance)       │
@@ -241,8 +241,13 @@ The gap between PIO's internal bandwidth and achievable DMA throughput is stark.
 |----------------|-------------------|-------|
 | `pio_sm_get_blocking()` (no DMA) | **~250 KB/s** | Each call round-trips through PCIe + mailbox |
 | PIOLib DMA (initial, default burst) | **~5–10 MB/s** | Pre-optimization, 4-beat DMA bursts |
-| PIOLib DMA (heavy channels, burst=8) | **~27 MB/s** | After PR #6994 reserving channels 0/1 |
-| Direct M3 core access (unofficial) | **~66 MB/s** | cleverca22's experiments; sample loss above 20 Mbit/s (2.5 MB/s) RX |
+| PIOLib DMA (heavy channels, burst=8) | **~27 MB/s** | After [PR #6994](https://github.com/raspberrypi/linux/pull/6994) reserving channels 0/1 |
+| piolib ioctl DMA (benchmark) | **17.51 MB/s** | `sram_dma_bench --piolib`, verified 2026-03-17 |
+| Cyclic DMA, DRAM bidir (kmod) | **40.35 / 35.87 MB/s** | `sram_dma_bench --dram`, verified 2026-03-17 |
+| Cyclic DMA, SRAM bidir (kmod) | **54.13 / 45.10 MB/s** | `sram_dma_bench --sram`, verified 2026-03-17 |
+| RX-only DMA, DRAM (kmod) | **55.97 MB/s** | `sram_dma_bench --rx-only`, verified 2026-03-17 |
+| Host DMA, custom driver | **~66 MB/s** | cleverca22 [libsigrok](https://github.com/cleverca22/libsigrok/commit/e3783bac8176e7454863b37723ab6d8a3f99731a); sample loss at this rate |
+| M3 Core 1 CPU-polled | **6.89 MB/s** | `m3_bridge_bench`, APB bridge limited (~54 cycles/access) |
 | 16-bit DAC output (fsphil) | **~10.8 MB/s** | 5.4 MS/s × 16-bit, with visible FIFO starvation pauses |
 
 The fundamental bottleneck was identified by Raspberry Pi engineer jdb: **"each DMA handshake cycle takes of the order of 70 bus cycles to complete"**. The 32-bit PIO FIFO sits on an APB bus, but the DMA engine has a 128-bit internal data bus — effectively wasting 75% of DMA bandwidth on padding. The datasheet-specified per-channel DMA read bandwidth of **500–600 Mbit/s (megabits/s)** yields roughly `600 Mbit/s ÷ 4 (bus width waste) ÷ 8 (bits per byte) ≈ 18.75 MB/s (megabytes/s)` effective for 32-bit peripheral transfers, aligning with the measured ~10–27 MB/s range.
@@ -253,7 +258,8 @@ To reach or exceed **10 MB/s**, the minimum PIO-side configuration is straightfo
 - **Match FIFO threshold to burst size**: set `dmactrl` to `0xC0000108` for heavy channels
 - **Use large transfer buffers**: reduces per-transfer setup overhead
 - **Avoid FIFO joining in full-duplex mode**: keep 8-deep TX + 8-deep RX rather than 16-deep one-way
-- **Future path — M3 core bounce buffer**: The M3 has single-cycle FIFO access and can theoretically copy PIO data into shared SRAM at full speed, then DMA from SRAM (wider bus) to host memory, eliminating the 70-cycle handshake penalty
+- **M3 core bounce buffer (tested, not viable for throughput)**: M3 PIO FIFO access is ~54 cycles (~270 ns), not single-cycle as claimed. CPU-polled throughput: 6.89 MB/s — slower than all DMA approaches. See `sram-benchmark/m3core1/PIO_ACCESS_LATENCY_RESEARCH.md`.
+- **Cyclic DMA with SRAM rings (implemented)**: Achieves 54.13 MB/s TX by eliminating PCIe per-burst overhead. SRAM rings at offset 0xA200+ (past firmware dynamic region). See `sram-benchmark/DESIGN.md`.
 
 ## Key repositories, documentation, and community resources
 
