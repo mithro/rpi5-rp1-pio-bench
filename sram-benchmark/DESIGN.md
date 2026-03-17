@@ -404,23 +404,23 @@ asm volatile("sev");
 
 ## Final Throughput Comparison
 
-All measurements use internal PIO loopback (pull → NOT → push) on SM0 or SM3.
-Throughput is bidirectional (TX word written, NOT'd word read back).
+All measurements verified on fresh boot, 2026-03-17. PIO loopback (pull → NOT → push)
+on SM0 unless noted. Duration 3 seconds per test.
 
 | Approach | TX MB/s | RX MB/s | Reliability | Bottleneck |
 |----------|---------|---------|-------------|------------|
-| **RX-only DMA, DRAM (cleverca22)** | — | **55.79** | 100% | **DMA handshake** |
-| TX-only DMA, DRAM (kmod) | 40.91 | — | 100% | PCIe posted writes |
-| Standard kernel DMA (baseline) | ~42 | ~42 | 100% | PCIe + APB handshake |
-| Cyclic DMA, DRAM bidirectional | 40.81 | 36.28 | 100/100 passes | PCIe read completions |
-| Cyclic DMA, SRAM bidirectional | **54.15** | **45.13** | 3/3 passes | APB DREQ handshake |
-| piolib ioctl DMA | 18.30 | 18.30 | 100% | ioctl overhead per xfer |
-| M3 Core 1 CPU-polled bridge | 6.89 | 6.89 | ~91% (index 62 errors) | APB bridge latency |
+| **RX-only DMA, DRAM** | — | **55.97** | PASS | **DMA handshake (burst=8)** |
+| **Cyclic DMA, SRAM bidirectional** | **54.13** | **45.10** | PASS (repeatable) | APB DREQ handshake |
+| TX-only DMA, DRAM | 40.93 | — | PASS | PCIe posted writes |
+| Cyclic DMA, DRAM bidirectional | 40.35 | 35.87 | PASS | PCIe read completions |
+| Standard kernel DMA (baseline) | ~42 | ~42 | — | PCIe + APB handshake |
+| piolib ioctl DMA | 17.51 | 17.51 | PASS | ioctl overhead per xfer |
+| M3 Core 1 CPU-polled bridge | 6.89 | 6.89 | ~91% (index 62) | APB bridge latency |
 | cleverca22 custom driver (ref) | — | ~66 | dropping samples | Direct register DMA |
 
 ### Key Findings
 
-1. **Unidirectional RX-only DMA achieves 55.79 MB/s** — 85% of cleverca22's
+1. **Unidirectional RX-only DMA achieves 55.97 MB/s** — 85% of cleverca22's
    66 MB/s custom driver result. The remaining gap is kernel dmaengine
    framework overhead. Uses a 1-instruction PIO generator (`in null, 32`).
 
@@ -443,7 +443,12 @@ Throughput is bidirectional (TX word written, NOT'd word read back).
 
 6. **TX/RX asymmetry is inherent.** TX uses posted writes (fire-and-forget),
    RX requires read completions (wait for data). Removing TX contention
-   boosts RX from 36 to 56 MB/s (55% improvement).
+   boosts RX from 36 to 56 MB/s (56% improvement).
+
+7. **SRAM DMA firmware corruption was a simple address overlap (FIXED).**
+   TX ring at 0x8B00 extended into firmware's active dynamic region at
+   0x9F48. Moving rings to 0xA200+ eliminated the issue entirely.
+   SRAM DMA now runs repeatedly without corruption or power cycling.
 
 ### Hardware Limitations Discovered
 
