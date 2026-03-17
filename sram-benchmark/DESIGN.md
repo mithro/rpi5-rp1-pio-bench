@@ -290,7 +290,7 @@ Implementation: `kmod/rp1_pio_sram.ko` + `sram_dma_bench.c`
 access both SRAM and PIO FIFOs in single clock cycles. However, Phase 3 with
 proper DMA configuration already exceeds 42 MB/s using SRAM ring buffers.
 
-### Phase 4: M3 Core 1 Bridge (~6.88 MB/s achieved)
+### Phase 4: M3 Core 1 Bridge (6.89 MB/s — hardware-limited)
 
 ```
 Host CPU ──PCIe──→ SRAM TX buffer (0x20009000)
@@ -318,11 +318,24 @@ This means the CPU-polled approach is hardware-limited to:
 
 | Metric | Value |
 |--------|-------|
-| Throughput (best) | 6.88 MB/s |
-| Rate min/mean/max | 6.881 / 6.885 / 6.889 MB/s |
+| Throughput | 6.89 MB/s |
+| Rate min/mean/max | 6.881 / 6.887 / 6.889 MB/s |
 | Cycles per word (measured) | ~116 at 200 MHz |
 | Cycles per PIO access | ~54 (TXF write or RXF read) |
-| Data integrity | ~99.98% (errors at index 62 only, periodic Core 0 interference) |
+| Data integrity | ~91.4% pass rate (errors at index 62 only) |
+
+**PIO address comparison (pio_addr_test):**
+
+| Base Address | FSTAT Read Rate | FSTAT Value | Notes |
+|-------------|-----------------|-------------|-------|
+| `0xF0000000` | 6.7M reads/sec | 0x0F000F00 (correct) | Fast-path alias, 1.41× faster |
+| `0x40178000` | 4.76M reads/sec | 0x00000000 (wrong) | Standard peripheral bus |
+
+**FSTAT limitation:** The `0xF0000000` PIO alias provides correct initial FSTAT
+values but does **NOT dynamically update** FSTAT when FIFO state changes. Polling
+RXEMPTY to wait for PIO output causes Core 1 to hang indefinitely. The APB bus
+latency (~270 ns per register access) provides sufficient implicit delay for PIO
+to complete its 3-cycle (15 ns) program between TXF3 write and RXF3 read.
 
 **PIO setup approach:** The PIO loopback program (pull → NOT → push) must be
 loaded via piolib from the host BEFORE Core 1 starts accessing FIFOs. Direct
@@ -335,13 +348,12 @@ during SEV bootstrap causes Core 0 firmware to refresh INSTR_MEM, so PIO setup
 must follow Core 1 launch, not precede it.
 
 **Index 62 error:** A periodic Core 0 firmware activity corrupts ~1 word every
-~8 passes at buffer index 62. The error values consistently start with `0x02...`
-pattern. This is not a bug in the bridge firmware but RP1 firmware interference.
+~10 passes at buffer index 62. This is not a bug in the bridge firmware but
+RP1 firmware interference on the shared APB bus.
 
-**Conclusion:** CPU-polled PIO FIFO access from Core 1 cannot exceed ~7 MB/s.
-The only remaining path to >42 MB/s is DMA — either fixing the kmod cyclic DMA
-configuration (currently 9.1 MB/s vs standard driver's 42 MB/s), or having
-Core 1 program the RP1 DMA controller directly.
+**Conclusion:** CPU-polled PIO FIFO access from Core 1 cannot exceed ~7 MB/s
+due to the APB bridge bottleneck. Cyclic DMA (Phase 3) achieves 40–54 MB/s
+and is the superior approach for high-throughput PIO data transfer.
 
 Implementation: `m3core1/pio_bridge.s` + `m3core1/m3_bridge_bench.c`
 
@@ -389,3 +401,63 @@ asm volatile("sev");
 | `benchmark_verify.{c,h}` | `benchmark/` | Pattern generation + verification |
 | mmap pattern | `toggle/toggle_rpi4.c` | `/dev/mem` GPIO mmap (adapt for BAR2) |
 | DMA thread pattern | `gpio-loopback/gpio_loopback.c` | Pthread-based DMA transfers |
+
+## Final Throughput Comparison
+
+All measurements use internal PIO loopback (pull → NOT → push) on SM0 or SM3.
+Throughput is bidirectional (TX word written, NOT'd word read back).
+
+| Approach | TX MB/s | RX MB/s | Reliability | Bottleneck |
+|----------|---------|---------|-------------|------------|
+| Standard kernel DMA (baseline) | ~42 | ~42 | 100% | PCIe + APB handshake |
+| Cyclic DMA, DRAM rings (kmod) | 40.81 | 36.28 | 100/100 passes | PCIe read completions |
+| Cyclic DMA, SRAM rings (kmod) | **54.15** | **45.13** | N/A (firmware corruption) | APB DREQ handshake |
+| piolib ioctl DMA | 18.30 | 18.30 | 100% | ioctl overhead per xfer |
+| M3 Core 1 CPU-polled bridge | 6.89 | 6.89 | ~91% (index 62 errors) | APB bridge latency |
+
+### Key Findings
+
+1. **Cyclic DMA with SRAM rings achieves the highest throughput** (54 MB/s TX),
+   exceeding the standard kernel DMA baseline by 29%. However, SRAM DMA mode
+   corrupts RP1 firmware state, requiring PoE power cycle recovery.
+
+2. **Cyclic DMA with DRAM rings is production-viable** at 40 MB/s TX, matching
+   the standard kernel baseline. Passed 100/100 reliability sweep with data
+   verification after fixing DREQ-before-terminate and FIFO clear issues.
+
+3. **M3 Core 1 bounce buffer is NOT faster than DMA.** The APB bridge between
+   M3 and PIO takes ~54 cycles per register access (~270 ns), limiting
+   CPU-polled throughput to ~7 MB/s — 6× slower than cyclic DMA.
+
+4. **TX/RX asymmetry is inherent.** TX uses posted writes (fire-and-forget),
+   RX requires read completions (wait for data). Ratio is consistently ~1.12×.
+
+5. **FIFO joining is not applicable** for bidirectional loopback — both TX and
+   RX FIFOs are needed simultaneously.
+
+### Hardware Limitations Discovered
+
+| Finding | Impact |
+|---------|--------|
+| PIO FIFO access from M3 is ~54 cycles, not 1 | Core 1 bridge limited to ~7 MB/s |
+| FSTAT at 0xF0000000 does not dynamically update | Cannot poll RXEMPTY from Core 1 |
+| 0xF0000000 is 1.41× faster than 0x40178000 | Use 0xF0 alias for all M3 PIO access |
+| Core 0 firmware interference at word 62 | ~1 error per 10 passes on Core 1 path |
+| SRAM DMA corrupts firmware state | SRAM mode requires PoE power cycle recovery |
+| DREQ must be disabled before DMA terminate | Otherwise kernel panic after ~15 cycles |
+
+### Tool Summary
+
+| Tool | Purpose |
+|------|---------|
+| `sram_dma_bench` | Cyclic DMA benchmark (--dram, --sram, --piolib, --json) |
+| `m3_bridge_bench` | M3 Core 1 SRAM↔FIFO bridge benchmark |
+| `run_tests.sh` | Automated multi-iteration test with statistics |
+| `sram_probe` | SRAM access verification and bandwidth |
+| `fifo_probe` | Direct PIO FIFO access via /dev/mem |
+| `sram_addr_probe` | DMA-accessible SRAM address discovery |
+| `sram_monitor` | Monitor SRAM for dynamic firmware changes |
+| `sram_region_test` | Safe SRAM region detection |
+| `pio_unclaim` | Release PIO state machine claims |
+| `core1_launcher` | M3 Core 1 bootstrap and monitoring |
+| `kmod/rp1_pio_sram.ko` | Kernel module for cyclic DMA with SRAM/DRAM rings |
