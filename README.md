@@ -10,22 +10,22 @@ This repository measures DMA throughput and GPIO latency between the ARM host an
 
 ## Throughput Results
 
-All numbers measured on 2026-03-17 (fresh boot, kernel 6.12+, both [PR #6994](https://github.com/raspberrypi/linux/pull/6994) and [PR #7190](https://github.com/raspberrypi/linux/pull/7190) applied).
+All throughput values are in **MB/s (megabytes per second)**, not Mbit/s. The RP1 datasheet uses Mbit/s in some places; those figures have been divided by 8 where referenced. Measured on 2026-03-17 (fresh boot, kernel 6.12+, both [PR #6994](https://github.com/raspberrypi/linux/pull/6994) and [PR #7190](https://github.com/raspberrypi/linux/pull/7190) applied).
 
 | Approach | TX (MB/s) | RX (MB/s) | Tool | Notes |
 |----------|----------:|----------:|------|-------|
-| RX-only DMA, DRAM | -- | 55.97 | `sram_dma_bench --rx-only` | Single-direction, kernel module |
-| Cyclic DMA, SRAM bidirectional | 54.13 | 45.10 | `sram_dma_bench --sram` | SRAM ring buffers at 0xA200+ |
-| TX-only DMA, DRAM | 40.93 | -- | `sram_dma_bench --tx-only` | Single-direction, kernel module |
-| Cyclic DMA, DRAM bidirectional | 40.35 | 35.87 | `sram_dma_bench --dram` | Standard DRAM ring buffers |
+| RX-only DMA, DRAM | -- | 56 | `sram_dma_bench --rx-only` | Single-direction, kernel module |
+| Cyclic DMA, SRAM bidirectional | 54 | 45 | `sram_dma_bench --sram` | SRAM ring buffers at 0xA200+ |
+| TX-only DMA, DRAM | 41 | -- | `sram_dma_bench --tx-only` | Single-direction, kernel module |
+| Cyclic DMA, DRAM bidirectional | 40 | 36 | `sram_dma_bench --dram` | Standard DRAM ring buffers |
 | Standard kernel DMA (piolib ioctl) | ~42 | ~42 | `benchmark/pio_loopback` | Concurrent TX+RX via pthreads |
-| piolib ioctl (benchmark tool) | 17.51 | 17.51 | `sram_dma_bench --piolib` | Sequential ioctl calls |
-| M3 Core 1 CPU-polled | 6.89 | 6.89 | `m3_bridge_bench` | APB bus bottleneck (see below) |
+| piolib ioctl (benchmark tool) | 18 | 18 | `sram_dma_bench --piolib` | Sequential ioctl calls |
+| M3 Core 1 CPU-polled | 7 | 7 | `m3_bridge_bench` | APB bus bottleneck (see below) |
 | cleverca22 custom driver (reference) | -- | ~66 | -- | Host-side DMA with custom driver, not M3 Core 1 |
 
 ### Key Findings
 
-- **PIO FIFO access from M3 Core 1 is slow.** Each register read/write takes ~54 cycles (~270 ns) due to the APB bridge between the M3 core and the PIO peripheral at `0xF0000000`. This is not single-cycle access. CPU-polled throughput is capped at ~7.4 MB/s (116 cycles/word).
+- **PIO FIFO access from M3 Core 1 is slow.** Each register read/write takes ~54 cycles (~270 ns) due to the APB bridge between the M3 core and the PIO peripheral at `0xF0000000`. This is not single-cycle access. CPU-polled throughput is capped at ~7 MB/s (116 cycles/word).
 - **FSTAT does not dynamically update at `0xF0000000`.** Polling FSTAT from Core 1 hangs because the value never changes. FIFO status must be inferred by other means.
 - **SRAM DMA ring buffers must avoid firmware regions.** Early tests suffered silent data corruption because ring buffers overlapped the firmware's dynamic allocation region at `0x9F48`--`0xA150`. Placing rings at `0xA200+` resolved this.
 - **DMA burst size and FIFO threshold must match.** Setting `dst_maxburst=8`, `src_maxburst=8`, and DMACTRL threshold=8 is required for correct operation. Mismatched values cause data corruption ([PR #7190](https://github.com/raspberrypi/linux/pull/7190)).
@@ -109,7 +109,7 @@ See [`hw.md`](hw.md) for the full pin mapping.
 | [`sram-benchmark/m3core1/`](sram-benchmark/m3core1/) | M3 Core 1 bootstrap, PIO FIFO tests, bridge benchmark |
 | [`sram-benchmark/DESIGN.md`](sram-benchmark/DESIGN.md) | Detailed SRAM memory map, firmware analysis, DMA configuration |
 | [`latency/`](latency/) | GPIO latency benchmark (L0--L3, RPi4 stimulus + RPi5 echo) |
-| [`gpio-loopback/`](gpio-loopback/) | GPIO loopback throughput benchmark (1-bit serial, ~1.5 MB/s) |
+| [`gpio-loopback/`](gpio-loopback/) | GPIO loopback throughput benchmark (1-bit serial, ~2 MB/s) |
 | [`toggle/`](toggle/) | GPIO toggle frequency benchmark with Glasgow capture |
 | [`docs/`](docs/) | RP1 PIO firmware communication and M3 register documentation |
 | [`hw.md`](hw.md) | Hardware setup, Pmod HAT pin mapping, jumper connections |
