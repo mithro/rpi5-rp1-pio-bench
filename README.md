@@ -23,15 +23,7 @@ All throughput values are in **MB/s (megabytes per second)**, not Mbit/s. The RP
 | M3 Core 1 CPU-polled | 7 | 7 | `m3_bridge_bench` | APB bus bottleneck (see below) |
 | cleverca22 custom driver (reference) | -- | ~66 | -- | Host-side DMA with custom driver, not M3 Core 1 |
 
-### Key Findings
-
-- **PIO FIFO access from M3 Core 1 is slow.** Each register read/write takes ~54 cycles (~270 ns) due to the APB bridge between the M3 core and the PIO peripheral at `0xF0000000`. This is not single-cycle access. CPU-polled throughput is capped at ~7 MB/s (116 cycles/word).
-- **FSTAT does not dynamically update at `0xF0000000`.** Polling FSTAT from Core 1 hangs because the value never changes. FIFO status must be inferred by other means.
-- **SRAM DMA ring buffers must avoid firmware regions.** Early tests suffered silent data corruption because ring buffers overlapped the firmware's dynamic allocation region at `0x9F48`--`0xA150`. Placing rings at `0xA200+` resolved this.
-- **DMA burst size and FIFO threshold must match.** Setting `dst_maxburst=8`, `src_maxburst=8`, and DMACTRL threshold=8 is required for correct operation. Mismatched values cause data corruption ([PR #7190](https://github.com/raspberrypi/linux/pull/7190)).
-- **cleverca22's ~66 MB/s result** used a custom host-side kernel driver with direct DMA, not M3 Core 1 access. It is included as an external reference point, not a result from this repository.
-
-For detailed analysis of the SRAM memory map, firmware reverse-engineering, and DMA configuration, see [`sram-benchmark/DESIGN.md`](sram-benchmark/DESIGN.md).
+For detailed analysis including hardware findings, SRAM memory map, firmware reverse-engineering, and DMA configuration, see [`sram-benchmark/DESIGN.md`](sram-benchmark/DESIGN.md).
 
 ## Latency Results
 
