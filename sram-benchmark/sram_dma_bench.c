@@ -33,6 +33,30 @@
 #include "piolib.h"
 #include "../benchmark/loopback.pio.h"
 
+/* ─── Unidirectional PIO programs ──────────────────────────────── */
+
+/* RX-only: generates data by shifting 32 null bits into ISR with autopush.
+ * Each PIO cycle pushes one 32-bit zero word to the RX FIFO.
+ * PIO instruction: in null, 32 = 0x4060 */
+static const uint16_t rx_gen_insns[] = { 0x4060 };
+static const pio_program_t rx_gen_program = {
+	.instructions = rx_gen_insns,
+	.length = 1,
+	.origin = -1,
+	.pio_version = 0,
+};
+
+/* TX-only: consumes data by shifting 32 bits out of OSR to null with autopull.
+ * Each PIO cycle pulls one 32-bit word from the TX FIFO and discards it.
+ * PIO instruction: out null, 32 = 0x6060 */
+static const uint16_t tx_con_insns[] = { 0x6060 };
+static const pio_program_t tx_con_program = {
+	.instructions = tx_con_insns,
+	.length = 1,
+	.origin = -1,
+	.pio_version = 0,
+};
+
 /* ─── ioctl definitions (must match kernel module) ────────────── */
 
 #define SRAM_IOC_MAGIC     'S'
@@ -41,6 +65,12 @@
 #define SRAM_IOC_DMA_STATUS _IOR(SRAM_IOC_MAGIC, 3, struct sram_dma_status)
 #define SRAM_IOC_DMA_DIAG  _IO(SRAM_IOC_MAGIC, 4)
 #define SRAM_IOC_START_SRAM_DMA _IO(SRAM_IOC_MAGIC, 6)
+#define SRAM_IOC_SET_DMA_DIR   _IOW(SRAM_IOC_MAGIC, 7, int)
+
+/* DMA direction modes (must match kernel module) */
+#define DMA_DIR_BOTH    0
+#define DMA_DIR_TX_ONLY 1
+#define DMA_DIR_RX_ONLY 2
 
 struct sram_dma_status {
 	uint32_t tx_ring_offset;
@@ -80,6 +110,7 @@ static struct {
 } results;
 
 static int json_mode;
+static int dma_dir = DMA_DIR_BOTH;  /* 0=both, 1=tx-only, 2=rx-only */
 
 /* ─── Timing ──────────────────────────────────────────────────── */
 
@@ -95,6 +126,7 @@ static double get_time_sec(void)
 static PIO pio;
 static int sm = -1;
 static uint pio_offset;
+static const pio_program_t *loaded_program;
 static int dev_fd = -1;
 static volatile uint32_t *dma_buf;
 
@@ -102,6 +134,9 @@ static volatile uint32_t *dma_buf;
 
 static int pio_setup(void)
 {
+	const pio_program_t *prog;
+	const char *prog_name;
+
 	pio = pio_open(0);
 	if (!pio) {
 		fprintf(stderr, "ERROR: pio_open(0) failed\n");
@@ -115,23 +150,45 @@ static int pio_setup(void)
 		return -1;
 	}
 
-	pio_offset = pio_add_program(pio, &loopback_program);
+	/* Select PIO program based on DMA direction */
+	if (dma_dir == DMA_DIR_RX_ONLY) {
+		prog = &rx_gen_program;
+		prog_name = "rx-generator (in null, 32)";
+	} else if (dma_dir == DMA_DIR_TX_ONLY) {
+		prog = &tx_con_program;
+		prog_name = "tx-consumer (out null, 32)";
+	} else {
+		prog = &loopback_program;
+		prog_name = "loopback (pull->NOT->push)";
+	}
+
+	pio_offset = pio_add_program(pio, prog);
 	if (pio_offset == PIO_ORIGIN_INVALID) {
 		fprintf(stderr, "ERROR: failed to load PIO program\n");
 		pio_sm_unclaim(pio, (uint)sm);
 		pio_close(pio);
 		return -1;
 	}
+	loaded_program = prog;
 
-	/* Configure: 32-bit autopull/autopush, 200 MHz (clkdiv=1) */
-	pio_sm_config c = loopback_program_get_default_config(pio_offset);
-	sm_config_set_out_shift(&c, false, true, 32);
-	sm_config_set_in_shift(&c, false, true, 32);
+	/* Configure SM: 32-bit shifts, 200 MHz (clkdiv=1) */
+	pio_sm_config c = pio_get_default_sm_config_for_pio(pio);
+	sm_config_set_wrap(&c, pio_offset, pio_offset + prog->length - 1);
 	sm_config_set_clkdiv(&c, 1.0f);
+
+	if (dma_dir == DMA_DIR_RX_ONLY) {
+		sm_config_set_in_shift(&c, false, true, 32);  /* autopush */
+	} else if (dma_dir == DMA_DIR_TX_ONLY) {
+		sm_config_set_out_shift(&c, false, true, 32);  /* autopull */
+	} else {
+		sm_config_set_out_shift(&c, false, true, 32);
+		sm_config_set_in_shift(&c, false, true, 32);
+	}
+
 	pio_sm_init(pio, (uint)sm, pio_offset, &c);
 	pio_sm_set_enabled(pio, (uint)sm, true);
 
-	printf("  PIO SM%d: loopback program loaded at offset %u\n", sm, pio_offset);
+	printf("  PIO SM%d: %s loaded at offset %u\n", sm, prog_name, pio_offset);
 	return 0;
 }
 
@@ -139,7 +196,7 @@ static void pio_teardown(void)
 {
 	if (sm >= 0) {
 		pio_sm_set_enabled(pio, (uint)sm, false);
-		pio_remove_program(pio, &loopback_program, pio_offset);
+		pio_remove_program(pio, loaded_program, pio_offset);
 		pio_sm_unclaim(pio, (uint)sm);
 		sm = -1;
 	}
@@ -215,15 +272,19 @@ static int test_dma_loopback(double duration_sec)
 	unsigned tx_words = st.tx_ring_size / 4;
 	unsigned rx_words = st.rx_ring_size / 4;
 
-	printf("  Filling TX ring with sequential pattern...\n");
-	for (unsigned i = 0; i < tx_words; i++)
-		tx_ring[i] = 0xA0000000u | i;
-	__sync_synchronize();
+	if (dma_dir != DMA_DIR_RX_ONLY) {
+		printf("  Filling TX ring with sequential pattern...\n");
+		for (unsigned i = 0; i < tx_words; i++)
+			tx_ring[i] = 0xA0000000u | i;
+		__sync_synchronize();
+	}
 
-	/* Clear RX ring */
-	for (unsigned i = 0; i < rx_words; i++)
-		rx_ring[i] = 0xDEADDEADu;
-	__sync_synchronize();
+	if (dma_dir != DMA_DIR_TX_ONLY) {
+		/* Clear RX ring */
+		for (unsigned i = 0; i < rx_words; i++)
+			rx_ring[i] = 0xDEADDEADu;
+		__sync_synchronize();
+	}
 
 	/* Start DMA */
 	printf("  Starting cyclic DMA...\n");
@@ -264,6 +325,36 @@ static int test_dma_loopback(double duration_sec)
 	if (st.rx_bytes > 0) {
 		double rx_bw = (double)st.rx_bytes / elapsed / (1024.0 * 1024.0);
 		printf("    RX throughput: %.2f MB/s\n", rx_bw);
+	}
+
+	/* For unidirectional modes, skip detailed verification */
+	if (dma_dir != DMA_DIR_BOTH) {
+		int verify_pass = 1;
+		if (dma_dir == DMA_DIR_RX_ONLY) {
+			/* RX-only: check that RX ring was written (not all 0xDEADDEAD) */
+			__sync_synchronize();
+			unsigned rx_written = 0;
+			for (unsigned i = 0; i < rx_words; i++) {
+				if (rx_ring[i] != 0xDEADDEADu)
+					rx_written++;
+			}
+			printf("\n  RX-only: %u/%u words written by DMA\n", rx_written, rx_words);
+			/* RX generator produces 0x00000000 — spot check */
+			if (rx_written > 0) {
+				printf("    RX[0..3]: 0x%08x 0x%08x 0x%08x 0x%08x\n",
+				       rx_ring[0], rx_ring[1], rx_ring[2], rx_ring[3]);
+			}
+			verify_pass = (rx_written > 0);
+		}
+		printf("\n");
+		results.mode = "dram";
+		results.duration = elapsed;
+		results.tx_bytes = st.tx_bytes;
+		results.rx_bytes = st.rx_bytes;
+		results.tx_mbps = st.tx_bytes > 0 ? (double)st.tx_bytes / elapsed / (1024.0 * 1024.0) : 0;
+		results.rx_mbps = st.rx_bytes > 0 ? (double)st.rx_bytes / elapsed / (1024.0 * 1024.0) : 0;
+		results.verify_pass = verify_pass;
+		return (verify_pass && (st.tx_bytes > 0 || st.rx_bytes > 0)) ? 0 : 1;
 	}
 
 	/* Verify RX data: should be bitwise NOT of TX pattern.
@@ -608,6 +699,10 @@ int main(int argc, char *argv[])
 			use_piolib = 1;
 		else if (strcmp(argv[i], "--diag") == 0)
 			diag_only = 1;
+		else if (strcmp(argv[i], "--tx-only") == 0)
+			dma_dir = DMA_DIR_TX_ONLY;
+		else if (strcmp(argv[i], "--rx-only") == 0)
+			dma_dir = DMA_DIR_RX_ONLY;
 		else if (strcmp(argv[i], "--json") == 0)
 			json_mode = 1;
 		else if (strncmp(argv[i], "--duration=", 11) == 0)
@@ -619,12 +714,14 @@ int main(int argc, char *argv[])
 	setbuf(stdout, NULL);
 	setbuf(stderr, NULL);
 
+	const char *dir_str = dma_dir == DMA_DIR_TX_ONLY ? " TX-only" :
+			      dma_dir == DMA_DIR_RX_ONLY ? " RX-only" : "";
 	const char *mode_str = use_piolib ? "piolib (standard ioctl DMA)" :
 			       use_sram  ? "SRAM (RP1-internal)" :
 					   "DRAM (host, via PCIe)";
 	printf("sram_dma_bench — Cyclic DMA PIO Loopback Benchmark\n");
 	printf("===================================================\n");
-	printf("Mode: %s\n\n", mode_str);
+	printf("Mode: %s%s\n\n", mode_str, dir_str);
 
 	/* Step 1: Set up PIO loopback */
 	printf("Step 1: Setting up PIO loopback...\n");
@@ -644,6 +741,19 @@ int main(int argc, char *argv[])
 			return 1;
 		}
 
+		/* Set DMA direction before starting test */
+		if (dma_dir != DMA_DIR_BOTH) {
+			if (ioctl(dev_fd, SRAM_IOC_SET_DMA_DIR, &dma_dir) < 0) {
+				fprintf(stderr, "ERROR: SET_DMA_DIR failed: %s\n",
+					strerror(errno));
+				device_cleanup();
+				pio_teardown();
+				return 1;
+			}
+			printf("  DMA direction: %s\n",
+			       dma_dir == DMA_DIR_TX_ONLY ? "TX-only" : "RX-only");
+		}
+
 		if (diag_only) {
 			printf("Step 3: Running DMA diagnostic (standalone)...\n");
 			int diag_ret = ioctl(dev_fd, SRAM_IOC_DMA_DIAG);
@@ -659,6 +769,11 @@ int main(int argc, char *argv[])
 			ret = test_dma_loopback(duration);
 		}
 
+		/* Reset DMA direction to bidirectional for next run */
+		if (dma_dir != DMA_DIR_BOTH) {
+			int both = DMA_DIR_BOTH;
+			ioctl(dev_fd, SRAM_IOC_SET_DMA_DIR, &both);
+		}
 		device_cleanup();
 		pio_teardown();
 	}
