@@ -64,10 +64,14 @@ in software** — only bypassed.
 
 | Configuration | Throughput | Source |
 |---|---|---|
-| Pre-optimization (default burst) | ~10.75 MB/s | Jeff Epler (Adafruit), Issue #116 |
-| After PR #6994 (heavy channels, burst=8) | ~27 MB/s | pelwell, PR #6994 |
-| This benchmark (internal loopback, concurrent TX+RX) | ~42 MB/s | benchmark/ |
-| Direct M3 core access (unofficial) | ~66 MB/s | cleverca22 |
+| Pre-optimization (default burst) | ~10.75 MB/s | Jeff Epler (Adafruit), [Issue #116](https://github.com/raspberrypi/utils/issues/116) |
+| After PR #6994 (heavy channels, burst=8) | ~27 MB/s | pelwell, [PR #6994](https://github.com/raspberrypi/linux/pull/6994) |
+| Standard kernel DMA (piolib ioctl) | ~42 MB/s | benchmark/ baseline |
+| Cyclic DMA, DRAM bidir (kmod) | 40.35 / 35.87 MB/s | sram-benchmark, verified 2026-03-17 |
+| Cyclic DMA, SRAM bidir (kmod) | 54.13 / 45.10 MB/s | sram-benchmark, verified 2026-03-17 |
+| RX-only DMA, DRAM (kmod) | 55.97 MB/s | sram-benchmark, verified 2026-03-17 |
+| Host DMA, custom driver (unofficial) | ~66 MB/s | cleverca22, [libsigrok](https://github.com/cleverca22/libsigrok/commit/e3783bac8176e7454863b37723ab6d8a3f99731a) |
+| M3 Core 1 CPU-polled | 6.89 MB/s | sram-benchmark/m3core1, verified 2026-03-17 |
 | Theoretical DMA ceiling (per RP1 datasheet) | 62-75 MB/s | RP1 datasheet |
 
 ---
@@ -320,65 +324,66 @@ it.
 - **No official API** for SRAM partitioning. Requires kernel driver changes
   and possibly firmware awareness.
 
-### Expected impact
+### Measured results (verified 2026-03-17)
 
-pelwell's early test with burst=16 showed **~50 MB/s** (with kernel warnings).
-SRAM buffers + cyclic DMA could plausibly reach **50-80 MB/s** by eliminating
-the PCIe-per-burst overhead.
+Implemented in `sram-benchmark/kmod/rp1_pio_sram.ko` + `sram-benchmark/sram_dma_bench.c`.
 
-**Effort:** High (kernel driver + device tree + SRAM coordination).
+| Mode | TX MB/s | RX MB/s | Source |
+|------|---------|---------|--------|
+| SRAM bidirectional | **54.13** | **45.10** | `sram_dma_bench --sram` |
+| DRAM bidirectional (comparison) | 40.35 | 35.87 | `sram_dma_bench --dram` |
+
+SRAM mode is ~33% faster than DRAM because it eliminates PCIe round-trips
+for DMA data fetches. DMA reads from SRAM via the RP1-internal AXI bus
+instead of issuing PCIe read completions.
+
+**SRAM ring placement:** Rings must be at offset 0xA200+ to avoid the firmware
+dynamic region at 0x9F48-0xA150. Overwriting this region with continuous DMA
+causes firmware hangs during PIO SM cleanup operations. Source: `sram_corruption_test.c`.
 
 ---
 
 ## 5. M3 Core 1 as PIO Bridge
 
-This is the highest-performance approach, proven by cleverca22 to achieve
-**~66 MB/s** — close to the theoretical DMA ceiling.
-
 ### Architecture
 
 ```
-Current path (all DMA):
-  Host Memory ←─PCIe─→ [RP1 DMA] ←─AXI/APB─→ [PIO FIFOs]
-                                    ^^^^^^^^
-                                    70-cycle handshake + APB narrowing
-
 M3 bridge path:
   Host Memory ←─PCIe─→ [RP1 DMA] ←─AXI─→ [Shared SRAM (64KB)]
-                                               ↑↓ (single-cycle, 32-bit)
+                                               ↑↓ (~54 cycles via APB bridge)
                                           [M3 Core 1]
-                                               ↑↓ (single-cycle, 32-bit)
+                                               ↑↓ (~54 cycles via APB bridge)
                                           [PIO FIFOs @ 0xF0000000]
 ```
 
-### Why it's faster
+### Measured performance (verified 2026-03-17)
 
-The M3 core has **single-cycle access** to PIO FIFOs at address `0xF0000000`.
-This is fundamentally faster than the DMA controller's path through the APB
-bridge:
+PIO FIFO access from M3 Core 1 is **NOT single-cycle**. Each 32-bit register
+read or write takes **~54 cycles (~270 ns at 200 MHz)** via the APB bus bridge.
+Source: `sram-benchmark/m3core1/pio_bridge.s` throughput measurements.
 
-| Access method | Latency per 32-bit word |
-|---|---|
-| DMA handshake → APB → FIFO | ~70 bus cycles (~350-700 ns) |
-| M3 register write → FIFO | 1 cycle (~5 ns) |
+| Access method | Latency per 32-bit word | Source |
+|---|---|---|
+| DMA handshake → APB → FIFO | ~70 bus cycles (~350-700 ns) | pelwell, [RPi Forum](https://forums.raspberrypi.com/viewtopic.php?t=374916) |
+| M3 register access → FIFO | ~54 cycles (~270 ns) | `m3core1/pio_bridge.s` |
 
-A tight M3 loop reading PIO FIFO and writing to SRAM can move data at
-**~200 MB/s** (200 MHz × 4 bytes, minus loop overhead → realistic ~100-200 MB/s).
-The SRAM-to-host DMA path has much higher bandwidth since SRAM is on the AXI
-bus without the APB bottleneck.
+CPU-polled throughput: **6.89 MB/s** (hardware limit ~7.4 MB/s at 200 MHz with
+116 cycles per word including SRAM load/store overhead).
 
-### How cleverca22 achieved ~66 MB/s
+### cleverca22's ~66 MB/s
 
-From [Raspberry Pi Forums](https://forums.raspberrypi.com/viewtopic.php?t=390556):
-
-1. Custom firmware running on an M3 core
-2. M3 reads PIO FIFO entries directly (single-cycle)
-3. Dumps data into shared SRAM
-4. Uses DMA software flow control to transfer from SRAM to host
+cleverca22 achieved ~66 MB/s using **host-side DMA with a custom driver**
+([libsigrok commit](https://github.com/cleverca22/libsigrok/commit/e3783bac8176e7454863b37723ab6d8a3f99731a)),
+not M3 Core 1 CPU polling. cleverca22 **proposed** (but did not implement) an M3 bounce
+buffer strategy:
 
 > "The M3 can read the PIO FIFO and dump the data into SRAM, and once 4 reads
 > are done, it can kick the SW flow control in the DMA block and copy from
 > SRAM to host RAM."
+>
+> — [RPi Forums](https://forums.raspberrypi.com/viewtopic.php?t=390556)
+
+This proposal assumed single-cycle FIFO access, which testing disproved (~54 cycles).
 
 ### Existing code and tools
 
@@ -421,29 +426,20 @@ asm volatile("sev");
 5. **Firmware version dependence:** The Core 1 bootstrap mechanism depends on
    firmware internals that may change between RP1 EEPROM versions.
 
-### Implementation outline
+### Implementation status
 
-```
-Core 1 firmware (< 8 KB):
-  1. Configure PIO SM (load program, set pins, etc.)
-  2. Loop:
-     a. Wait for PIO RX FIFO non-empty (poll FSTAT or use IRQ)
-     b. Read word from PIO RX FIFO (single-cycle at 0xF0000024)
-     c. Write word to SRAM ring buffer
-     d. If ring buffer period is full:
-        - Trigger DMA from SRAM to host via software flow control
-        - Or: signal host via mailbox/interrupt
+Implemented and benchmarked in `sram-benchmark/m3core1/`:
+- `pio_bridge.s` — Core 1 firmware (SRAM↔FIFO bridge)
+- `m3_bridge_bench.c` — Host-side benchmark tool
+- `core1_launcher.c` — Core 1 bootstrap via SEV/IRQ vector hook
 
-Host-side (kernel driver):
-  1. Map shared SRAM via PCIe BAR2
-  2. Load Core 1 firmware into SRAM
-  3. Bootstrap Core 1
-  4. Configure cyclic DMA from SRAM ring buffer to host memory
-  5. Consume data from host DMA ring buffer
-```
+**Result:** 6.89 MB/s — limited by the ~54 cycle APB bridge latency per
+PIO register access. This is 6× slower than cyclic DMA (40-54 MB/s).
 
-**Effort:** Very high (custom firmware + kernel driver + SRAM coordination).
-**Expected impact:** ~66 MB/s proven, potentially higher with optimization.
+**Key constraint:** FSTAT at 0xF0000000 does **NOT dynamically update** from
+Core 1. Polling RXEMPTY/TXFULL hangs indefinitely. The firmware relies on
+the APB bus latency (~270 ns) as implicit delay between TXF write and RXF read.
+Source: `sram-benchmark/m3core1/pio_bridge.s` FSTAT polling test.
 
 ---
 
@@ -475,83 +471,51 @@ relevant if PCIe bandwidth became the bottleneck, which it won't.
 
 ## 7. Comparison Matrix
 
-| Approach | Throughput | Effort | Risk | Maturity |
-|---|---|---|---|---|
-| **Baseline (stock kernel)** | ~10 MB/s | — | — | Shipping |
-| **PR #6994 + #7190** | ~27 MB/s | Trivial | None | Merged |
-| **This benchmark (concurrent TX+RX)** | ~42 MB/s | Done | None | Working |
-| **Larger bounce buffers (64 KB)** | ~42+ MB/s | Trivial | Low | Configurable now |
-| **Multi-descriptor scatter-gather** | ~45 MB/s | Low-Med | Low | Not attempted |
-| **Zero-copy DMA (eliminate bounce)** | ~45 MB/s | Medium | Medium | In-kernel path exists |
-| **Async transfer ioctls** | ~42 MB/s (better latency) | Medium | Low | In-kernel callback exists |
-| **Shared SRAM + cyclic DMA** | ~50-80 MB/s | High | Medium | Endorsed by pelwell |
-| **M3 Core 1 bridge** | ~66+ MB/s | Very High | High | Proven by cleverca22 |
-| **M3 bridge + cyclic DMA** | ~100+ MB/s | Very High | High | Theoretical |
-| **PCIe tuning** | ~42 MB/s (no change) | Low | Low | Not a bottleneck |
+Verified measurements from fresh-boot test run on 2026-03-17.
 
-### Impact vs. effort visualisation
-
-```
-Throughput
-  100+ │                                          ● M3 + cyclic (theoretical)
-       │
-   80  │                              ● SRAM + cyclic
-       │                                      ● M3 bridge (proven)
-   60  │
-       │
-   42  │──●── Current best (concurrent TX+RX) ─────── ● Zero-copy ─── ● SG batch
-       │
-   27  │── ● PR #6994+#7190 ────────────────────────────────────────────────────
-       │
-   10  │── ● Stock kernel ──────────────────────────────────────────────────────
-       └──────────────────────────────────────────────────────────────────────→
-         Trivial    Low      Medium     High      Very High        Effort
-```
+| Approach | Throughput | Status | Source |
+|---|---|---|---|
+| Stock kernel (default burst) | ~10 MB/s | Baseline | [Issue #116](https://github.com/raspberrypi/utils/issues/116) |
+| PR #6994 + #7190 (burst=8) | ~27 MB/s | Merged | [PR #6994](https://github.com/raspberrypi/linux/pull/6994) |
+| Cyclic DMA, DRAM bidir | 40.35 / 35.87 MB/s | Verified | `sram_dma_bench --dram` |
+| piolib ioctl DMA | 17.51 MB/s | Verified | `sram_dma_bench --piolib` |
+| TX-only DMA, DRAM | 40.93 MB/s | Verified | `sram_dma_bench --tx-only` |
+| Cyclic DMA, SRAM bidir | 54.13 / 45.10 MB/s | Verified | `sram_dma_bench --sram` |
+| RX-only DMA, DRAM | 55.97 MB/s | Verified | `sram_dma_bench --rx-only` |
+| Host DMA, custom driver | ~66 MB/s | Reference | cleverca22 [libsigrok](https://github.com/cleverca22/libsigrok/commit/e3783bac8176e7454863b37723ab6d8a3f99731a) |
+| M3 Core 1 CPU-polled | 6.89 MB/s | Verified | `m3_bridge_bench` |
+| Theoretical DMA ceiling | 62-75 MB/s | RP1 datasheet | — |
 
 ---
 
-## 8. Recommendations
+## 8. Status of Investigated Approaches
 
-### Tier 1: Do now (trivial, no risk)
+### Implemented and verified
 
-1. **Ensure PR #6994 and #7190 are applied.** These are prerequisites for
-   everything else. `sudo rpi-update` on a recent kernel should include both.
+1. **Cyclic DMA with SRAM rings** — 54.13 MB/s TX. Implemented in
+   `sram-benchmark/kmod/rp1_pio_sram.ko`. Eliminates PCIe per-burst overhead.
+   Rings placed at SRAM offset 0xA200+ to avoid firmware dynamic region.
 
-2. **Use large bounce buffers.** In your benchmark/application code:
-   ```c
-   pio_sm_config_xfer(pio, sm, PIO_DIR_TO_SM, 65536, 4);
-   pio_sm_config_xfer(pio, sm, PIO_DIR_FROM_SM, 65536, 4);
-   ```
+2. **Unidirectional RX-only DMA** — 55.97 MB/s. Removes TX channel bus
+   contention. Uses 1-instruction PIO generator (`in null, 32`).
 
-### Tier 2: Worth investigating (medium effort, medium impact)
+3. **M3 Core 1 CPU-polled bridge** — 6.89 MB/s. APB bridge latency (~54 cycles
+   per PIO register access) limits throughput. Implemented in `m3core1/`.
 
-3. **Multi-element scatter-gather submission.** Modify the kernel driver to
-   submit all 4 bounce buffers as one SG list instead of 4 separate DMA
-   operations. Reduces interrupt overhead and CPU involvement.
+### Not yet investigated
 
-4. **Async transfer API.** Expose the existing in-kernel async callback
-   mechanism to userspace via new ioctls. Enables overlapping computation
-   with DMA.
+4. **Multi-element scatter-gather submission** — submit all bounce buffers as
+   one SG list instead of separate DMA operations.
 
-### Tier 3: The big win (high effort, high impact)
+5. **Zero-copy DMA** — pin user pages and DMA directly, eliminating bounce
+   buffer memcpy. The in-kernel API already supports this via `dma_addr` parameter.
 
-5. **Shared SRAM + cyclic DMA.** This is the optimization path pelwell himself
-   identified. It eliminates PCIe round-trips from the per-burst DMA path.
-   Requires kernel driver changes, device tree modifications, and careful
-   SRAM partitioning to avoid breaking Core 0's firmware.
+6. **Async transfer ioctls** — expose in-kernel async callback to userspace.
 
-### Tier 4: Maximum performance (very high effort, proven viable)
+### Not applicable
 
-6. **M3 Core 1 bridge firmware.** Achieves ~66 MB/s (proven). Requires custom
-   bare-metal firmware, SRAM partitioning, and has no official support.
-   The [librerpi/rp1-lk](https://github.com/librerpi/rp1-lk) project provides
-   a solid starting point. Main risks: firmware version dependence, potential
-   to brick RP1 (recoverable via debug UART only).
-
-### Don't bother
-
-7. **PCIe tuning.** Not the bottleneck. Would need 10-20× improvement in
-   RP1-internal throughput before PCIe matters.
+7. **PCIe tuning** — not the bottleneck (~2% utilization at 42 MB/s).
+   Source: pelwell, [RPi Forum](https://forums.raspberrypi.com/viewtopic.php?t=374916).
 
 ---
 

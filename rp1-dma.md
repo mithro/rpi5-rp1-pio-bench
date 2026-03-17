@@ -89,7 +89,7 @@ For achieving >10 MB/s full duplex with current software, the recommended config
 - **Use large DMA buffers** — at least 64 KB per transfer to amortize per-transfer overhead; 1 MB transfers work fine
 - **Minimize PIO instructions per data word** — ideally 1 instruction per push/pull cycle
 
-With these settings, **~27 MB/s per direction is achievable**, giving roughly **~50 MB/s aggregate** for full-duplex operation. Full duplex requires two DMA channels running simultaneously (one TX, one RX), preferably both using heavy channels 0 and 1. The theoretical per-channel limit of **62–75 MB/s** suggests further driver improvements could unlock additional headroom. Before the official driver, community member cleverca22 demonstrated **~66 MB/s** through direct register hacking (bypassing the kernel stack entirely), confirming the hardware can sustain much higher rates.
+With piolib's standard ioctl DMA path, **~17-27 MB/s per direction** is achievable depending on buffer configuration. Using cyclic DMA with a custom kernel module (`sram-benchmark/kmod/rp1_pio_sram.ko`), throughput reaches **40.35 MB/s TX / 35.87 MB/s RX** with DRAM rings, or **54.13 MB/s TX / 45.10 MB/s RX** with SRAM rings (verified 2026-03-17). Unidirectional RX-only mode achieves **55.97 MB/s**. Community member cleverca22 demonstrated **~66 MB/s** using a custom host-side DMA driver ([libsigrok fork](https://github.com/cleverca22/libsigrok/commit/e3783bac8176e7454863b37723ab6d8a3f99731a)), bypassing the kernel dmaengine framework.
 
 ---
 

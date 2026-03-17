@@ -355,8 +355,8 @@ All measurements verified on fresh boot (2026-03-17). Sources in `sram-benchmark
    RP2040's simple zero-wait-state AHB-Lite crossbar.
    Source: [RP2040 Datasheet](https://datasheets.raspberrypi.com/rp2040/rp2040-datasheet.pdf)
 
-5. **Cyclic DMA is the superior approach** for high-throughput PIO data transfer.
-   SRAM rings (54 MB/s) and unidirectional RX-only (56 MB/s) both far exceed
+5. **Cyclic DMA achieves 6–8× higher throughput than M3 CPU polling.**
+   SRAM rings (54 MB/s) and unidirectional RX-only (56 MB/s) vs
    M3 Core 1 CPU polling (6.89 MB/s). The DMA handshake (~70 bus cycles per burst)
    is the remaining bottleneck. Source: pelwell, [RPi Forum](https://forums.raspberrypi.com/viewtopic.php?t=374916)
 

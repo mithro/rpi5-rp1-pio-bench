@@ -343,7 +343,7 @@ RP1 firmware interference on the shared APB bus.
 
 **Conclusion:** CPU-polled PIO FIFO access from Core 1 cannot exceed ~7 MB/s
 due to the APB bridge bottleneck. Cyclic DMA (Phase 3) achieves 40–54 MB/s
-and is the superior approach for high-throughput PIO data transfer.
+and achieves 6–8× higher throughput than M3 CPU-polled FIFO access.
 
 Implementation: `m3core1/pio_bridge.s` + `m3core1/m3_bridge_bench.c`
 
@@ -414,7 +414,7 @@ on SM0 unless noted. Duration 3 seconds per test.
    66 MB/s custom driver result. The remaining gap is kernel dmaengine
    framework overhead. Uses a 1-instruction PIO generator (`in null, 32`).
 
-2. **Cyclic DMA with SRAM rings achieves the highest bidirectional throughput**
+2. **Cyclic DMA with SRAM rings achieves 54 MB/s TX bidirectional throughput**
    (54 MB/s TX), exceeding the standard kernel DMA baseline by 29%. SRAM rings
    are placed at 0xA200+ to avoid the firmware dynamic region (0x9F48-0xA150).
 
