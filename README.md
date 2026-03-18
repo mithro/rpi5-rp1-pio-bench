@@ -105,9 +105,9 @@ See [`hw.md`](hw.md) for the full pin mapping.
 | [`toggle/`](toggle/) | GPIO toggle frequency benchmark with Glasgow capture |
 | [`docs/`](docs/) | RP1 PIO firmware communication and M3 register documentation |
 | [`hw.md`](hw.md) | Hardware setup, Pmod HAT pin mapping, jumper connections |
-| [`rp1-dma.md`](rp1-dma.md) | RP1 DMA architecture and the 10 MB/s throughput wall |
-| [`rp1-dma-2.md`](rp1-dma-2.md) | RP1 PIO register map, DMA data path, worked examples |
-| [`resources.md`](resources.md) | Datasheets, source repos, kernel PRs, community projects |
+| [`docs/rp1-dma.md`](docs/rp1-dma.md) | RP1 DMA architecture and the 10 MB/s throughput wall |
+| [`docs/rp1-dma-registers.md`](docs/rp1-dma-registers.md) | RP1 PIO register map, DMA data path, worked examples |
+| [`docs/resources.md`](docs/resources.md) | Datasheets, source repos, kernel PRs, community projects |
 | [`verify_pmod_connections.py`](verify_pmod_connections.py) | GPIO connection test script for Pmod wiring |
 
 ## References
