@@ -165,7 +165,7 @@ def deploy_and_build(
     log(f"  Building {target} on {label}...")
     r = ssh_run(
         host,
-        f"cd {remote_dir}/latency && make clean {target}",
+        f"cd {remote_dir}/latency-gpio && make clean {target}",
         timeout=60,
     )
     if r.returncode != 0:
@@ -178,7 +178,7 @@ def deploy_and_build(
 
     # Verify binary exists
     binary_name = f"latency_{target}"
-    r = ssh_run(host, f"test -x {remote_dir}/latency/{binary_name}", timeout=10)
+    r = ssh_run(host, f"test -x {remote_dir}/latency-gpio/{binary_name}", timeout=10)
     if r.returncode != 0:
         log(f"  ERROR: Binary {binary_name} not found after build on {label}")
         return False
@@ -199,7 +199,7 @@ def sync_source(
     log(f"  Syncing source to {label}...")
 
     # Sync the latency directory and shared benchmark stats
-    for subdir in ["latency/", "benchmark/"]:
+    for subdir in ["latency-gpio/", "throughput-piolib/"]:
         local_path = local_dir / subdir
         if not local_path.exists():
             log(f"  ERROR: Local path {local_path} does not exist")
@@ -258,8 +258,8 @@ def run_test(
     6. Stop the RPi5 program
     7. Clean up
     """
-    rpi5_binary = f"{remote_dir}/latency/latency_rpi5"
-    rpi4_binary = f"{remote_dir}/latency/latency_rpi4"
+    rpi5_binary = f"{remote_dir}/latency-gpio/latency_rpi5"
+    rpi4_binary = f"{remote_dir}/latency-gpio/latency_rpi4"
 
     result = TestResult(test_mode=test_mode, passed=False, exit_code=1)
 
@@ -413,7 +413,7 @@ def run_test_standalone(
     Used for L3 (batched DMA throughput) which uses an internal PIO
     data generator and measures DMA read performance directly.
     """
-    rpi5_binary = f"{remote_dir}/latency/latency_rpi5"
+    rpi5_binary = f"{remote_dir}/latency-gpio/latency_rpi5"
 
     result = TestResult(test_mode=test_mode, passed=False, exit_code=1)
 

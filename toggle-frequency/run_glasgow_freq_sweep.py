@@ -11,12 +11,12 @@ import sys
 import time
 
 RPi5_HOST = "rpi5-pmod.iot.welland.mithis.com"
-TOGGLE_BIN = "/home/tim/rpi5-rp1-pio-bench/toggle/toggle_rpi5"
+TOGGLE_BIN = "/home/tim/rpi5-rp1-pio-bench/toggle-frequency/toggle_rpi5"
 GLASGOW_BIN = "/home/tim/.local/share/uv/tools/glasgow/bin/glasgow"
 TOGGLE_PIN = 5
 TOGGLE_DURATION_MS = 30000  # 30 seconds per measurement
 GATE_MS = 1000  # 1 second gate time
-TMP_DIR = "/home/tim/rpi5-rp1-pio-bench/toggle/tmp"
+TMP_DIR = "/home/tim/rpi5-rp1-pio-bench/toggle-frequency/tmp"
 
 # clkdiv values to sweep (highest to lowest frequency)
 CLKDIVS = [256, 128, 64, 32, 16, 8, 4, 2, 1]
