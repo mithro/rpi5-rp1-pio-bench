@@ -1,8 +1,10 @@
-# PIO Toggle Frequency Benchmark Results
+# PIO Toggle Frequency Benchmark -- Results
 
-**Date:** 2026-03-14
-**PIO program:** 2-instruction SET loop (`set pins,1` / `set pins,0`)
-**Reported clock:** `clock_get_hz(clk_sys)` = 200,000,000 Hz (200 MHz)
+## Test Configuration
+
+- Date: 2026-03-14
+- PIO program: 2-instruction SET loop (`set pins,1` / `set pins,0`)
+- Reported clock: `clock_get_hz(clk_sys)` = 200,000,000 Hz (200 MHz)
 
 ## Summary
 
@@ -115,3 +117,8 @@ If PIO ran at 400 MHz, clkdiv=1 would produce 200 MHz, also within our 288 MHz N
 - **GPIO5 (JC9):** Physical jumper cable between RPi5 and RPi4 appears disconnected; Glasgow (directly wired to RPi5 header) can still measure this pin
 - **GPIO4 (JC7):** Working between RPi5 and RPi4; used for RPi4 edge counter measurements
 - **Glasgow pin A7** is wired to GPIO5 on the RPi5 header (not via inter-RPi cable)
+
+## See Also
+
+- [Design](DESIGN.md) -- PIO toggle program, Glasgow applet, sweep methodology
+- [Usage](USAGE.md) -- prerequisites, build, running sweeps
