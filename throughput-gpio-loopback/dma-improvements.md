@@ -66,12 +66,12 @@ in software** — only bypassed.
 |---|---|---|
 | Pre-optimization (default burst) | ~10.75 MB/s | Jeff Epler (Adafruit), [Issue #116](https://github.com/raspberrypi/utils/issues/116) |
 | After PR #6994 (heavy channels, burst=8) | ~27 MB/s | pelwell, [PR #6994](https://github.com/raspberrypi/linux/pull/6994) |
-| Standard kernel DMA (piolib ioctl) | ~42 MB/s | benchmark/ baseline |
-| Cyclic DMA, DRAM bidir (kmod) | 40.35 / 35.87 MB/s | sram-benchmark, verified 2026-03-17 |
-| Cyclic DMA, SRAM bidir (kmod) | 54.13 / 45.10 MB/s | sram-benchmark, verified 2026-03-17 |
-| RX-only DMA, DRAM (kmod) | 55.97 MB/s | sram-benchmark, verified 2026-03-17 |
+| Standard kernel DMA (piolib ioctl) | ~42 MB/s | throughput-piolib/ baseline |
+| Cyclic DMA, DRAM bidir (kmod) | 40.35 / 35.87 MB/s | throughput-cyclic-dma, verified 2026-03-17 |
+| Cyclic DMA, SRAM bidir (kmod) | 54.13 / 45.10 MB/s | throughput-cyclic-dma, verified 2026-03-17 |
+| RX-only DMA, DRAM (kmod) | 55.97 MB/s | throughput-cyclic-dma, verified 2026-03-17 |
 | Host DMA, custom driver (unofficial) | ~66 MB/s | cleverca22, [libsigrok](https://github.com/cleverca22/libsigrok/commit/e3783bac8176e7454863b37723ab6d8a3f99731a) |
-| M3 Core 1 CPU-polled | 6.89 MB/s | sram-benchmark/m3core1, verified 2026-03-17 |
+| M3 Core 1 CPU-polled | 6.89 MB/s | throughput-m3-core1, verified 2026-03-17 |
 | Theoretical DMA ceiling (per RP1 datasheet) | 62-75 MB/s | RP1 datasheet |
 
 ---
@@ -326,7 +326,7 @@ it.
 
 ### Measured results (verified 2026-03-17)
 
-Implemented in `sram-benchmark/kmod/rp1_pio_sram.ko` + `sram-benchmark/sram_dma_bench.c`.
+Implemented in `throughput-cyclic-dma/kmod/rp1_pio_sram.ko` + `throughput-cyclic-dma/sram_dma_bench.c`.
 
 | Mode | TX MB/s | RX MB/s | Source |
 |------|---------|---------|--------|
@@ -360,12 +360,12 @@ M3 bridge path:
 
 PIO FIFO access from M3 Core 1 is **NOT single-cycle**. Each 32-bit register
 read or write takes **~54 cycles (~270 ns at 200 MHz)** via the APB bus bridge.
-Source: `sram-benchmark/m3core1/pio_bridge.s` throughput measurements.
+Source: `throughput-m3-core1/pio_bridge.s` throughput measurements.
 
 | Access method | Latency per 32-bit word | Source |
 |---|---|---|
 | DMA handshake → APB → FIFO | ~70 bus cycles (~350-700 ns) | pelwell, [RPi Forum](https://forums.raspberrypi.com/viewtopic.php?t=374916) |
-| M3 register access → FIFO | ~54 cycles (~270 ns) | `m3core1/pio_bridge.s` |
+| M3 register access → FIFO | ~54 cycles (~270 ns) | `throughput-m3-core1/pio_bridge.s` |
 
 CPU-polled throughput: **6.89 MB/s** (hardware limit ~7.4 MB/s at 200 MHz with
 116 cycles per word including SRAM load/store overhead).
@@ -428,9 +428,9 @@ asm volatile("sev");
 
 ### Implementation status
 
-Implemented and benchmarked in `sram-benchmark/m3core1/`:
+Implemented and benchmarked in `throughput-m3-core1/`:
 - `pio_bridge.s` — Core 1 firmware (SRAM↔FIFO bridge)
-- `m3_bridge_bench.c` — Host-side benchmark tool
+- `throughput-m3-core1/m3_bridge_bench.c` — Host-side benchmark tool
 - `core1_launcher.c` — Core 1 bootstrap via SEV/IRQ vector hook
 
 **Result:** 6.89 MB/s — limited by the ~54 cycle APB bridge latency per
@@ -439,7 +439,7 @@ PIO register access. This is 6× slower than cyclic DMA (40-54 MB/s).
 **Key constraint:** FSTAT at 0xF0000000 does **NOT dynamically update** from
 Core 1. Polling RXEMPTY/TXFULL hangs indefinitely. The firmware relies on
 the APB bus latency (~270 ns) as implicit delay between TXF write and RXF read.
-Source: `sram-benchmark/m3core1/pio_bridge.s` FSTAT polling test.
+Source: `throughput-m3-core1/pio_bridge.s` FSTAT polling test.
 
 ---
 
@@ -483,7 +483,7 @@ Verified measurements from fresh-boot test run on 2026-03-17.
 | Cyclic DMA, SRAM bidir | 54.13 / 45.10 MB/s | Verified | `sram_dma_bench --sram` |
 | RX-only DMA, DRAM | 55.97 MB/s | Verified | `sram_dma_bench --rx-only` |
 | Host DMA, custom driver | ~66 MB/s | Reference | cleverca22 [libsigrok](https://github.com/cleverca22/libsigrok/commit/e3783bac8176e7454863b37723ab6d8a3f99731a) |
-| M3 Core 1 CPU-polled | 6.89 MB/s | Verified | `m3_bridge_bench` |
+| M3 Core 1 CPU-polled | 6.89 MB/s | Verified | `throughput-m3-core1/m3_bridge_bench` |
 | Theoretical DMA ceiling | 62-75 MB/s | RP1 datasheet | — |
 
 ---
@@ -493,14 +493,14 @@ Verified measurements from fresh-boot test run on 2026-03-17.
 ### Implemented and verified
 
 1. **Cyclic DMA with SRAM rings** — 54.13 MB/s TX. Implemented in
-   `sram-benchmark/kmod/rp1_pio_sram.ko`. Eliminates PCIe per-burst overhead.
+   `throughput-cyclic-dma/kmod/rp1_pio_sram.ko`. Eliminates PCIe per-burst overhead.
    Rings placed at SRAM offset 0xA200+ to avoid firmware dynamic region.
 
 2. **Unidirectional RX-only DMA** — 55.97 MB/s. Removes TX channel bus
    contention. Uses 1-instruction PIO generator (`in null, 32`).
 
 3. **M3 Core 1 CPU-polled bridge** — 6.89 MB/s. APB bridge latency (~54 cycles
-   per PIO register access) limits throughput. Implemented in `m3core1/`.
+   per PIO register access) limits throughput. Implemented in `throughput-m3-core1/`.
 
 ### Not yet investigated
 

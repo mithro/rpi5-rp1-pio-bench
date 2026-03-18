@@ -321,7 +321,7 @@ management processors" likely refers to PIO state machine instruction execution
 
 ## 10. Final Throughput Comparison
 
-All measurements verified on fresh boot (2026-03-17). Sources in `sram-benchmark/DESIGN.md`.
+All measurements verified on fresh boot (2026-03-17). Sources in `throughput-cyclic-dma/DESIGN.md`.
 
 | Approach | Throughput | Method | Source |
 |----------|-----------|--------|--------|

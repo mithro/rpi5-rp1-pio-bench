@@ -1,4 +1,4 @@
-# SRAM + Cyclic DMA Benchmark — Design Document
+# Cyclic DMA Throughput -- Design
 
 ## Overview
 
@@ -345,34 +345,11 @@ RP1 firmware interference on the shared APB bus.
 due to the APB bridge bottleneck. Cyclic DMA (Phase 3) achieves 40–54 MB/s
 and achieves 6–8× higher throughput than M3 CPU-polled FIFO access.
 
-Implementation: `m3core1/pio_bridge.s` + `m3core1/m3_bridge_bench.c`
+Implementation: `throughput-m3-core1/pio_bridge.s` + `throughput-m3-core1/m3_bridge_bench.c`
 
 ## M3 Core 1
 
-### Bootstrap Sequence
-
-```c
-/* Write entry point XOR magic to SYSCFG */
-*(volatile uint32_t*)(0x40154014) = 0x4FF83F2D ^ entrypoint;
-/* Write stack pointer */
-*(volatile uint32_t*)(0x4015401C) = stack_pointer;
-/* Send event to wake Core 1 */
-asm volatile("sev");
-```
-
-### Memory Map (M3 perspective)
-
-| Address | Resource |
-|---------|----------|
-| `0x2000_0000` | Shared SRAM (64 KB, single-cycle) |
-| `0xF000_0000` | PIO peripheral alias (~54 cycles via APB bridge) |
-| `0x4017_8000` | PIO block (APB, ~54 cycles — same bus as 0xF0000000) |
-
-### Constraints
-
-- 8 KB instruction RAM, 8 KB data RAM (for firmware)
-- No official support — community-proven approaches only
-- Recovery may require debug UART if firmware hangs
+For M3 Core 1 architecture and PIO access analysis, see [throughput-m3-core1/DESIGN.md](../throughput-m3-core1/DESIGN.md).
 
 ## References
 
@@ -386,11 +363,11 @@ asm volatile("sev");
 
 | Module | Path | Purpose |
 |--------|------|---------|
-| `benchmark_stats.{c,h}` | `benchmark/` | Statistics (min/max/mean/median/percentiles) |
-| `benchmark_format.{c,h}` | `benchmark/` | Human-readable + JSON output |
-| `benchmark_verify.{c,h}` | `benchmark/` | Pattern generation + verification |
+| `benchmark_stats.{c,h}` | `throughput-piolib/` | Statistics (min/max/mean/median/percentiles) |
+| `benchmark_format.{c,h}` | `throughput-piolib/` | Human-readable + JSON output |
+| `benchmark_verify.{c,h}` | `throughput-piolib/` | Pattern generation + verification |
 | mmap pattern | `toggle/toggle_rpi4.c` | `/dev/mem` GPIO mmap (adapt for BAR2) |
-| DMA thread pattern | `gpio-loopback/gpio_loopback.c` | Pthread-based DMA transfers |
+| DMA thread pattern | `throughput-gpio-loopback/gpio_loopback.c` | Pthread-based DMA transfers |
 
 ## See Also
 
