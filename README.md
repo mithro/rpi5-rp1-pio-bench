@@ -70,12 +70,12 @@ cd throughput-cyclic-dma/m3core1 && make
 sudo ./m3_bridge_bench
 ```
 
-### `latency/run_latency_benchmark.py` -- GPIO Latency
+### `latency-gpio/run_latency_benchmark.py` -- GPIO Latency
 
 Coordinates RPi4 (stimulus) and RPi5 (echo) over SSH to measure round-trip GPIO latency at each abstraction layer.
 
 ```bash
-uv run python latency/run_latency_benchmark.py --tests L0 L1 L2 L3
+uv run python latency-gpio/run_latency_benchmark.py --tests L0 L1 L2 L3
 ```
 
 Requires two devices connected via GPIO4/GPIO5 (Pmod JC connector). See [`hw.md`](hw.md) for wiring.
@@ -100,7 +100,7 @@ See [`hw.md`](hw.md) for the full pin mapping.
 | [`throughput-cyclic-dma/kmod/`](throughput-cyclic-dma/kmod/) | `rp1_pio_sram.ko` kernel module for cyclic DMA |
 | [`throughput-m3-core1/`](throughput-m3-core1/) | M3 Core 1 bootstrap, PIO FIFO tests, bridge benchmark |
 | [`throughput-cyclic-dma/DESIGN.md`](throughput-cyclic-dma/DESIGN.md) | Detailed SRAM memory map, firmware analysis, DMA configuration |
-| [`latency/`](latency/) | GPIO latency benchmark (L0--L3, RPi4 stimulus + RPi5 echo) |
+| [`latency-gpio/`](latency-gpio/) | GPIO latency benchmark (L0--L3, RPi4 stimulus + RPi5 echo) |
 | [`throughput-gpio-loopback/`](throughput-gpio-loopback/) | GPIO loopback throughput benchmark (1-bit serial, ~2 MB/s) |
 | [`toggle/`](toggle/) | GPIO toggle frequency benchmark with Glasgow capture |
 | [`docs/`](docs/) | RP1 PIO firmware communication and M3 register documentation |
