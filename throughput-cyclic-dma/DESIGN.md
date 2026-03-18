@@ -392,72 +392,8 @@ asm volatile("sev");
 | mmap pattern | `toggle/toggle_rpi4.c` | `/dev/mem` GPIO mmap (adapt for BAR2) |
 | DMA thread pattern | `gpio-loopback/gpio_loopback.c` | Pthread-based DMA transfers |
 
-## Final Throughput Comparison
+## See Also
 
-All measurements verified on fresh boot, 2026-03-17. PIO loopback (pull → NOT → push)
-on SM0 unless noted. Duration 3 seconds per test.
-
-| Approach | TX MB/s | RX MB/s | Reliability | Bottleneck |
-|----------|---------|---------|-------------|------------|
-| **RX-only DMA, DRAM** | — | **55.97** | PASS | **DMA handshake (burst=8)** |
-| **Cyclic DMA, SRAM bidirectional** | **54.13** | **45.10** | PASS (repeatable) | APB DREQ handshake |
-| TX-only DMA, DRAM | 40.93 | — | PASS | PCIe posted writes |
-| Cyclic DMA, DRAM bidirectional | 40.35 | 35.87 | PASS | PCIe read completions |
-| Standard kernel DMA (baseline) | ~42 | ~42 | — | PCIe + APB handshake |
-| piolib ioctl DMA | 17.51 | 17.51 | PASS | ioctl overhead per xfer |
-| M3 Core 1 CPU-polled bridge | 6.89 | 6.89 | ~91% (index 62) | APB bridge latency |
-| cleverca22 custom driver (ref) | — | ~66 | dropping samples | Direct register DMA |
-
-### Key Findings
-
-1. **Unidirectional RX-only DMA achieves 55.97 MB/s** — 85% of cleverca22's
-   66 MB/s custom driver result. The remaining gap is kernel dmaengine
-   framework overhead. Uses a 1-instruction PIO generator (`in null, 32`).
-
-2. **Cyclic DMA with SRAM rings achieves 54 MB/s TX bidirectional throughput**
-   (54 MB/s TX), exceeding the standard kernel DMA baseline by 29%. SRAM rings
-   are placed at 0xA200+ to avoid the firmware dynamic region (0x9F48-0xA150).
-
-3. **Cyclic DMA with DRAM rings is production-viable** at 40 MB/s TX, matching
-   the standard kernel baseline. Passed 100/100 reliability sweep with data
-   verification.
-
-4. **M3 Core 1 bounce buffer is NOT faster than DMA.** The APB bridge between
-   M3 and PIO takes ~54 cycles per register access (~270 ns), limiting
-   CPU-polled throughput to ~7 MB/s — 6× slower than cyclic DMA.
-
-5. **DMA handshake overhead is the dominant bottleneck.** burst=4 gives 33 MB/s,
-   burst=8 gives 56 MB/s (70% improvement). Buffer size has no effect.
-   pelwell's "~70 bus cycles per handshake" is confirmed.
-
-6. **TX/RX asymmetry is inherent.** TX uses posted writes (fire-and-forget),
-   RX requires read completions (wait for data). Removing TX contention
-   boosts RX from 36 to 56 MB/s (56% improvement).
-
-### Hardware Limitations Discovered
-
-| Finding | Impact |
-|---------|--------|
-| PIO FIFO access from M3 is ~54 cycles, not 1 | Core 1 bridge limited to ~7 MB/s |
-| FSTAT at 0xF0000000 does not dynamically update | Cannot poll RXEMPTY from Core 1 |
-| 0xF0000000 is 1.41× faster than 0x40178000 | Use 0xF0 alias for all M3 PIO access |
-| Core 0 firmware interference at word 62 | ~1 error per 10 passes on Core 1 path |
-| SRAM 0x9F48-0xA150 is firmware dynamic state | DMA rings must be placed at 0xA200+ |
-| DREQ must be disabled before DMA terminate | Prevents dw-axi-dma descriptor pool corruption |
-
-### Tool Summary
-
-| Tool | Purpose |
-|------|---------|
-| `sram_dma_bench` | Cyclic DMA benchmark (--dram, --sram, --piolib, --tx-only, --rx-only, --json) |
-| `m3_bridge_bench` | M3 Core 1 SRAM↔FIFO bridge benchmark |
-| `run_tests.sh` | Automated multi-iteration test with statistics |
-| `sram_probe` | SRAM access verification and bandwidth |
-| `fifo_probe` | Direct PIO FIFO access via /dev/mem |
-| `sram_addr_probe` | DMA-accessible SRAM address discovery |
-| `sram_monitor` | Monitor SRAM for dynamic firmware changes |
-| `sram_region_test` | Safe SRAM region detection |
-| `sram_corruption_test` | SRAM DMA firmware health diagnostic |
-| `pio_unclaim` | Release PIO state machine claims |
-| `core1_launcher` | M3 Core 1 bootstrap and monitoring |
-| `kmod/rp1_pio_sram.ko` | Kernel module for cyclic DMA with SRAM/DRAM rings |
+- [README.md](README.md) — Overview and key results
+- [RESULTS.md](RESULTS.md) — Full measurement tables, reliability data, hardware limitations
+- [USAGE.md](USAGE.md) — Build instructions, run modes, tool descriptions
