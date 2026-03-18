@@ -18,7 +18,7 @@ All throughput values are in **MB/s (megabytes per second)**, not Mbit/s. The RP
 | Cyclic DMA, SRAM bidirectional | 54 | 45 | `sram_dma_bench --sram` | SRAM ring buffers at 0xA200+ |
 | TX-only DMA, DRAM | 41 | -- | `sram_dma_bench --tx-only` | Single-direction, kernel module |
 | Cyclic DMA, DRAM bidirectional | 40 | 36 | `sram_dma_bench --dram` | Standard DRAM ring buffers |
-| Standard kernel DMA (piolib ioctl) | ~42 | ~42 | `benchmark/pio_loopback` | Concurrent TX+RX via pthreads |
+| Standard kernel DMA (piolib ioctl) | ~42 | ~42 | `throughput-piolib/pio_loopback` | Concurrent TX+RX via pthreads |
 | piolib ioctl (benchmark tool) | 18 | 18 | `sram_dma_bench --piolib` | Sequential ioctl calls |
 | M3 Core 1 CPU-polled | 7 | 7 | `m3_bridge_bench` | APB bus bottleneck (see below) |
 | cleverca22 custom driver (reference) | -- | ~66 | -- | Host-side DMA with custom driver, not M3 Core 1 |
@@ -40,12 +40,12 @@ L1 is 112x L0 because each `pio_sm_get/put` requires an ioctl through the kernel
 
 ## Benchmark Tools
 
-### `benchmark/pio_loopback` -- Standard DMA Throughput
+### `throughput-piolib/pio_loopback` -- Standard DMA Throughput
 
 Measures round-trip DMA throughput using `pio_sm_xfer_data()` (the standard piolib interface). A 3-instruction PIO program performs bitwise NOT in a loop; TX and RX run concurrently in separate pthreads.
 
 ```bash
-cd benchmark && make benchmark
+cd throughput-piolib && make benchmark
 sudo ./pio_loopback --iterations=20
 ```
 
@@ -95,7 +95,7 @@ See [`hw.md`](hw.md) for the full pin mapping.
 
 | Path | Description |
 |------|-------------|
-| [`benchmark/`](benchmark/) | Standard DMA loopback throughput benchmark (`pio_loopback`) |
+| [`throughput-piolib/`](throughput-piolib/) | Standard DMA loopback throughput benchmark (`pio_loopback`) |
 | [`sram-benchmark/`](sram-benchmark/) | SRAM/DRAM cyclic DMA benchmark, kernel module, M3 Core 1 tools |
 | [`sram-benchmark/kmod/`](sram-benchmark/kmod/) | `rp1_pio_sram.ko` kernel module for cyclic DMA |
 | [`sram-benchmark/m3core1/`](sram-benchmark/m3core1/) | M3 Core 1 bootstrap, PIO FIFO tests, bridge benchmark |
