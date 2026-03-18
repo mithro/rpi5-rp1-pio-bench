@@ -1,8 +1,13 @@
-# Cyclic DMA Throughput Results
+# Cyclic DMA Throughput -- Results
 
-All measurements verified on fresh boot, 2026-03-17. Kernel 6.12+ with
-PR #6994 and PR #7190 patches applied. PIO loopback (pull, NOT, push) on SM0
-unless noted. Duration 3 seconds per test.
+## Test Configuration
+
+- Date: 2026-03-17 (fresh boot)
+- Hardware: Raspberry Pi 5
+- Kernel: 6.12+ with PR #6994 (Heavy DMA channel reservation) and PR #7190
+  (threshold/burst alignment fix)
+- PIO program: loopback (pull, NOT, push) on SM0 unless noted
+- Duration: 3 seconds per test
 
 ## Throughput Comparison
 

@@ -26,10 +26,10 @@ access from M3. Cyclic DMA approaches achieve 6-8x higher throughput (40-55
 MB/s) but with higher per-transfer latency. M3 Core 1 is better suited to
 low-latency control tasks than bulk data transfer.
 
-## Documentation
+## See Also
 
-- [DESIGN.md](DESIGN.md) -- Architecture and implementation details
-- [RESULTS.md](RESULTS.md) -- Measured performance numbers
-- [USAGE.md](USAGE.md) -- Build and run instructions
-- [PIO_ACCESS_LATENCY_RESEARCH.md](PIO_ACCESS_LATENCY_RESEARCH.md) -- Bus
+- [Design](DESIGN.md) -- Architecture and implementation details
+- [Results](RESULTS.md) -- Measured performance numbers
+- [Usage](USAGE.md) -- Build and run instructions
+- [PIO Access Latency Research](PIO_ACCESS_LATENCY_RESEARCH.md) -- Bus
   architecture research explaining the 54-cycle PIO access latency

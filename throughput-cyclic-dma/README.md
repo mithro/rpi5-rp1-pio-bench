@@ -23,7 +23,7 @@ Two buffer modes are supported:
 The PIO program performs a bitwise NOT loopback (pull, NOT, push) on SM0, so
 data integrity can be verified by checking `TX_word ^ RX_word == 0xFFFFFFFF`.
 
-## Key Results
+## Key Result
 
 All measurements from fresh boot on 2026-03-17, 3-second duration, kernel 6.12+.
 
@@ -39,10 +39,10 @@ SRAM bidirectional TX throughput exceeds the standard kernel DMA baseline (~42
 MB/s) by 29%. Unidirectional RX-only reaches 56 MB/s, 85% of cleverca22's
 custom driver result (~66 MB/s).
 
-## Documentation
+## See Also
 
-- [DESIGN.md](DESIGN.md) -- SRAM memory map, firmware analysis, DMA
+- [Design](DESIGN.md) -- SRAM memory map, firmware analysis, DMA
   configuration, data path diagrams, M3 Core 1 architecture
-- [RESULTS.md](RESULTS.md) -- Full measurement tables, reliability data, burst
+- [Results](RESULTS.md) -- Full measurement tables, reliability data, burst
   tuning, hardware limitations
-- [USAGE.md](USAGE.md) -- Build instructions, run modes, tool descriptions
+- [Usage](USAGE.md) -- Build instructions, run modes, tool descriptions

@@ -1,11 +1,11 @@
-# Usage
+# PIO Loopback Throughput -- Usage
 
 ## Prerequisites
 
 - Raspberry Pi 5
 - `libpio-dev` package installed (`sudo apt install libpio-dev`)
 - Kernel 6.12+ with the following patches applied:
-  - PR #6994 -- piolib DMA transfer support
+  - PR #6994 -- Heavy DMA channel reservation
   - PR #7190 -- DMA threshold/burst alignment fix
 - `/dev/pio0` device node present
 

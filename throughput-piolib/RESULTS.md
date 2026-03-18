@@ -1,4 +1,4 @@
-# Results
+# PIO Loopback Throughput -- Results
 
 ## Measured throughput
 
@@ -15,10 +15,10 @@ The aggregate throughput (total bytes / total wall time) is slightly
 lower than the per-iteration mean because it includes inter-iteration
 overhead (pattern fill, buffer clear, thread creation/join).
 
-## Test environment
+## Test Configuration
 
 - Hardware: Raspberry Pi 5
-- Kernel: 6.12+ with PR #6994 (piolib DMA support) and PR #7190
+- Kernel: 6.12+ with PR #6994 (Heavy DMA channel reservation) and PR #7190
   (threshold/burst alignment fix)
 - PIO clock: 200 MHz (divider 1.0)
 - FIFO: 8 TX + 8 RX (unjoined)

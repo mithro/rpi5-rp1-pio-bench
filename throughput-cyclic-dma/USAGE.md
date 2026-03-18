@@ -1,4 +1,4 @@
-# Cyclic DMA Benchmark -- Usage
+# Cyclic DMA Throughput -- Usage
 
 ## Prerequisites
 

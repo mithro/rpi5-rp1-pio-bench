@@ -12,14 +12,14 @@ deadlock (the piolib `pio_sm_xfer_data` call is blocking). Data integrity
 is verified after each iteration by checking the bitwise NOT relationship
 between sent and received buffers.
 
-## Key result
+## Key Result
 
 ~42 MB/s aggregate throughput with default settings (256 KB transfers,
 100 iterations, DMA threshold=8, priority=2). Zero data errors.
 
-## Documentation
+## See Also
 
-- [DESIGN.md](DESIGN.md) -- how the benchmark works
-- [RESULTS.md](RESULTS.md) -- measured throughput numbers
-- [USAGE.md](USAGE.md) -- build and run instructions, CLI reference
-- [FUTURE.md](FUTURE.md) -- planned improvements
+- [Design](DESIGN.md) -- how the benchmark works
+- [Results](RESULTS.md) -- measured throughput numbers
+- [Usage](USAGE.md) -- build and run instructions, CLI reference
+- [Future](FUTURE.md) -- planned improvements

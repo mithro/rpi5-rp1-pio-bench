@@ -1,6 +1,11 @@
 # M3 Core 1 PIO Bridge -- Results
 
-All measurements taken on 2026-03-17 on a fresh boot.
+## Test Configuration
+
+- Date: 2026-03-17 (fresh boot)
+- Hardware: Raspberry Pi 5
+- Kernel: 6.12+
+- PIO program: loopback (pull, NOT, push) on SM3
 
 ## Bridge Throughput
 
