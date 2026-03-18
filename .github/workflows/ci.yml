@@ -14,18 +14,18 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build test binary
-        working-directory: benchmark
+        working-directory: throughput-piolib
         run: make test
 
       - name: Run tests
-        working-directory: benchmark
+        working-directory: throughput-piolib
         run: make run-test
 
       - name: Upload test binary
         uses: actions/upload-artifact@v4
         with:
           name: benchmark_test-x86_64
-          path: benchmark/benchmark_test
+          path: throughput-piolib/benchmark_test
 
   test-arm:
     name: Test (aarch64)
@@ -34,18 +34,18 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build test binary
-        working-directory: benchmark
+        working-directory: throughput-piolib
         run: make test
 
       - name: Run tests
-        working-directory: benchmark
+        working-directory: throughput-piolib
         run: make run-test
 
       - name: Upload test binary
         uses: actions/upload-artifact@v4
         with:
           name: benchmark_test-aarch64
-          path: benchmark/benchmark_test
+          path: throughput-piolib/benchmark_test
 
   build-benchmark:
     name: Build benchmark (aarch64)
@@ -64,11 +64,11 @@ jobs:
         run: sudo apt-get install -y libpio-dev
 
       - name: Build benchmark binary
-        working-directory: benchmark
+        working-directory: throughput-piolib
         run: make benchmark FORCE_BUILD=1
 
       - name: Upload benchmark binary
         uses: actions/upload-artifact@v4
         with:
           name: pio_loopback-aarch64
-          path: benchmark/pio_loopback
+          path: throughput-piolib/pio_loopback
