@@ -102,7 +102,7 @@ See [`hw.md`](hw.md) for the full pin mapping.
 | [`throughput-cyclic-dma/DESIGN.md`](throughput-cyclic-dma/DESIGN.md) | Detailed SRAM memory map, firmware analysis, DMA configuration |
 | [`latency-gpio/`](latency-gpio/) | GPIO latency benchmark (L0--L3, RPi4 stimulus + RPi5 echo) |
 | [`throughput-gpio-loopback/`](throughput-gpio-loopback/) | GPIO loopback throughput benchmark (1-bit serial, ~2 MB/s) |
-| [`toggle/`](toggle/) | GPIO toggle frequency benchmark with Glasgow capture |
+| [`toggle-frequency/`](toggle-frequency/) | GPIO toggle frequency benchmark with Glasgow capture |
 | [`docs/`](docs/) | RP1 PIO firmware communication and M3 register documentation |
 | [`hw.md`](hw.md) | Hardware setup, Pmod HAT pin mapping, jumper connections |
 | [`docs/rp1-dma.md`](docs/rp1-dma.md) | RP1 DMA architecture and the 10 MB/s throughput wall |
