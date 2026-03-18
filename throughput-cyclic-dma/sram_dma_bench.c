@@ -196,6 +196,11 @@ static void pio_teardown(void)
 {
 	if (sm >= 0) {
 		pio_sm_set_enabled(pio, (uint)sm, false);
+		/* Reset DMACTRL to defaults (disable DREQ) so subsequent
+		 * piolib users don't inherit our threshold/priority settings */
+		pio_sm_set_dmactrl(pio, (uint)sm, true, 0);
+		pio_sm_set_dmactrl(pio, (uint)sm, false, 0);
+		pio_sm_clear_fifos(pio, (uint)sm);
 		pio_remove_program(pio, loaded_program, pio_offset);
 		pio_sm_unclaim(pio, (uint)sm);
 		sm = -1;
