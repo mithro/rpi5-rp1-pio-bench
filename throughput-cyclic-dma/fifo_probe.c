@@ -6,7 +6,7 @@
  *
  * Requires: RPi5, sudo, libpio-dev
  *
- * Build: gcc -O2 -I../benchmark -I/usr/include/piolib -o fifo_probe \
+ * Build: gcc -O2 -I../throughput-piolib -I/usr/include/piolib -o fifo_probe \
  *        fifo_probe.c ../throughput-piolib/benchmark_stats.c \
  *        ../throughput-piolib/benchmark_verify.c ../throughput-piolib/benchmark_format.c \
  *        -lpio -lpthread -lm

@@ -9,12 +9,12 @@ CC       ?= gcc
 CFLAGS   := -Wall -Wextra -Werror -O2 -std=c11
 
 # Portable source files (from benchmark/ directory)
-PORTABLE_SRCS := ../benchmark/benchmark_stats.c \
-                 ../benchmark/benchmark_verify.c \
-                 ../benchmark/benchmark_format.c
+PORTABLE_SRCS := ../throughput-piolib/benchmark_stats.c \
+                 ../throughput-piolib/benchmark_verify.c \
+                 ../throughput-piolib/benchmark_format.c
 
 SRCS          := gpio_loopback.c $(PORTABLE_SRCS)
-BENCH_CFLAGS  := $(CFLAGS) -I../benchmark -I/usr/include/piolib
+BENCH_CFLAGS  := $(CFLAGS) -I../throughput-piolib -I/usr/include/piolib
 BENCH_LDFLAGS := -lpio -lpthread -lm
 
 # ─── Platform detection ─────────────────────────────────────
@@ -25,8 +25,8 @@ IS_RPI5 := $(shell test -e /dev/pio0 && echo yes || echo no)
 benchmark: gpio_loopback
 
 gpio_loopback: $(SRCS) gpio_loopback.pio.h \
-               ../benchmark/benchmark_stats.h ../benchmark/benchmark_verify.h \
-               ../benchmark/benchmark_format.h
+               ../throughput-piolib/benchmark_stats.h ../throughput-piolib/benchmark_verify.h \
+               ../throughput-piolib/benchmark_format.h
 ifeq ($(FORCE_BUILD),1)
 	$(CC) $(BENCH_CFLAGS) -o $@ $(SRCS) $(BENCH_LDFLAGS)
 else ifeq ($(IS_RPI5),yes)
