@@ -61,7 +61,7 @@ sudo ./sram_dma_bench --dram    # DRAM ring buffers
 sudo ./sram_dma_bench --rx-only # Single-direction RX
 ```
 
-### `throughput-cyclic-dma/m3core1/m3_bridge_bench` -- M3 Core 1 Access
+### `throughput-m3-core1/m3_bridge_bench` -- M3 Core 1 Access
 
 Bootstraps the RP1's second ARM Cortex-M3 core via SEV and measures PIO FIFO throughput with direct CPU polling from the M3 side.
 
@@ -98,7 +98,7 @@ See [`hw.md`](hw.md) for the full pin mapping.
 | [`throughput-piolib/`](throughput-piolib/) | Standard DMA loopback throughput benchmark (`pio_loopback`) |
 | [`throughput-cyclic-dma/`](throughput-cyclic-dma/) | SRAM/DRAM cyclic DMA benchmark, kernel module, M3 Core 1 tools |
 | [`throughput-cyclic-dma/kmod/`](throughput-cyclic-dma/kmod/) | `rp1_pio_sram.ko` kernel module for cyclic DMA |
-| [`throughput-cyclic-dma/m3core1/`](throughput-cyclic-dma/m3core1/) | M3 Core 1 bootstrap, PIO FIFO tests, bridge benchmark |
+| [`throughput-m3-core1/`](throughput-m3-core1/) | M3 Core 1 bootstrap, PIO FIFO tests, bridge benchmark |
 | [`throughput-cyclic-dma/DESIGN.md`](throughput-cyclic-dma/DESIGN.md) | Detailed SRAM memory map, firmware analysis, DMA configuration |
 | [`latency/`](latency/) | GPIO latency benchmark (L0--L3, RPi4 stimulus + RPi5 echo) |
 | [`gpio-loopback/`](gpio-loopback/) | GPIO loopback throughput benchmark (1-bit serial, ~2 MB/s) |
