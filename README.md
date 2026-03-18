@@ -29,14 +29,14 @@ For detailed analysis including hardware findings, SRAM memory map, firmware rev
 
 Measured over 1000 iterations, 50 warmup, GPIO4/GPIO5 (JC connector), kernel 6.12+. RPi4 generates stimulus pulses; RPi5 echoes through PIO at progressively higher abstraction layers.
 
-| Layer | Description | Median | P99 |
-|-------|-------------|-------:|----:|
-| L0 | PIO-only echo (no CPU) | 388 ns | 481 ns |
-| L1 | PIO + ioctl round-trip | 43.6 us | 46.7 us |
-| L2 | PIO + single-word DMA | 52.5 us | 53.0 us |
-| L3 | Batched 4 KB DMA read | 88.6 us | 90.2 us |
+| Layer | Description | Median | Ratio to L0 |
+|-------|-------------|-------:|-----------:|
+| L0 | PIO-only echo (no CPU) | 388 ns | 1x |
+| L1 | PIO + ioctl round-trip | 44 us | 113x |
+| L2 | PIO + single-word DMA | 52 us | 134x |
+| L3 | Batched 4 KB DMA read | 89 us | 229x |
 
-L1 is 112x L0 because each `pio_sm_get/put` requires an ioctl through the kernel into the RP1 firmware mailbox. L2 adds DMA setup/teardown overhead but has tighter variance (stddev 1.8 us vs 3.2 us).
+L1 is 113x L0 because each `pio_sm_get/put` requires an ioctl through the kernel into the RP1 firmware mailbox. See [latency-gpio/RESULTS.md](latency-gpio/RESULTS.md) for full statistics (min, P95, P99, max, stddev).
 
 ## Benchmark Tools
 
@@ -66,7 +66,7 @@ sudo ./sram_dma_bench --rx-only # Single-direction RX
 Bootstraps the RP1's second ARM Cortex-M3 core via SEV and measures PIO FIFO throughput with direct CPU polling from the M3 side.
 
 ```bash
-cd throughput-cyclic-dma/m3core1 && make
+cd throughput-m3-core1 && make
 sudo ./m3_bridge_bench
 ```
 
@@ -79,6 +79,24 @@ uv run python latency-gpio/run_latency_benchmark.py --tests L0 L1 L2 L3
 ```
 
 Requires two devices connected via GPIO4/GPIO5 (Pmod JC connector). See [`hw.md`](hw.md) for wiring.
+
+### `throughput-gpio-loopback/gpio_loopback` -- GPIO Loopback Throughput
+
+Measures DMA throughput through a 1-bit GPIO serial loopback. PIO serialises each 32-bit word to a single GPIO pin and deserialises on input, creating 32x DMA expansion.
+
+```bash
+cd throughput-gpio-loopback && make
+sudo ./gpio_loopback
+```
+
+### `toggle-frequency/toggle_rpi5` -- Toggle Frequency
+
+Measures GPIO toggle frequency at various PIO clock dividers, using a Glasgow Interface Explorer as an independent frequency counter.
+
+```bash
+cd toggle-frequency && make
+uv run python run_toggle_benchmark.py
+```
 
 ## Hardware Setup
 
