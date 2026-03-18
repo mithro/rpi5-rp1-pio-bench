@@ -43,7 +43,7 @@
 
 #include <misc/rp1_pio_if.h>
 #include "piolib.h"
-#include "../benchmark/loopback.pio.h"
+#include "../throughput-piolib/loopback.pio.h"
 
 /* ioctl definitions (must match kmod) */
 #define SRAM_IOC_MAGIC     'S'

@@ -23,7 +23,7 @@ All throughput values are in **MB/s (megabytes per second)**, not Mbit/s. The RP
 | M3 Core 1 CPU-polled | 7 | 7 | `m3_bridge_bench` | APB bus bottleneck (see below) |
 | cleverca22 custom driver (reference) | -- | ~66 | -- | Host-side DMA with custom driver, not M3 Core 1 |
 
-For detailed analysis including hardware findings, SRAM memory map, firmware reverse-engineering, and DMA configuration, see [`sram-benchmark/DESIGN.md`](sram-benchmark/DESIGN.md).
+For detailed analysis including hardware findings, SRAM memory map, firmware reverse-engineering, and DMA configuration, see [`throughput-cyclic-dma/DESIGN.md`](throughput-cyclic-dma/DESIGN.md).
 
 ## Latency Results
 
@@ -49,24 +49,24 @@ cd throughput-piolib && make benchmark
 sudo ./pio_loopback --iterations=20
 ```
 
-### `sram-benchmark/sram_dma_bench` -- Cyclic DMA Throughput
+### `throughput-cyclic-dma/sram_dma_bench` -- Cyclic DMA Throughput
 
-Uses a custom kernel module (`sram-benchmark/kmod/rp1_pio_sram.ko`) to set up cyclic DMA transfers with configurable ring buffer locations (SRAM or DRAM), burst sizes, and period sizes.
+Uses a custom kernel module (`throughput-cyclic-dma/kmod/rp1_pio_sram.ko`) to set up cyclic DMA transfers with configurable ring buffer locations (SRAM or DRAM), burst sizes, and period sizes.
 
 ```bash
-cd sram-benchmark && make
+cd throughput-cyclic-dma && make
 sudo insmod kmod/rp1_pio_sram.ko
 sudo ./sram_dma_bench --sram    # SRAM ring buffers
 sudo ./sram_dma_bench --dram    # DRAM ring buffers
 sudo ./sram_dma_bench --rx-only # Single-direction RX
 ```
 
-### `sram-benchmark/m3core1/m3_bridge_bench` -- M3 Core 1 Access
+### `throughput-cyclic-dma/m3core1/m3_bridge_bench` -- M3 Core 1 Access
 
 Bootstraps the RP1's second ARM Cortex-M3 core via SEV and measures PIO FIFO throughput with direct CPU polling from the M3 side.
 
 ```bash
-cd sram-benchmark/m3core1 && make
+cd throughput-cyclic-dma/m3core1 && make
 sudo ./m3_bridge_bench
 ```
 
@@ -96,10 +96,10 @@ See [`hw.md`](hw.md) for the full pin mapping.
 | Path | Description |
 |------|-------------|
 | [`throughput-piolib/`](throughput-piolib/) | Standard DMA loopback throughput benchmark (`pio_loopback`) |
-| [`sram-benchmark/`](sram-benchmark/) | SRAM/DRAM cyclic DMA benchmark, kernel module, M3 Core 1 tools |
-| [`sram-benchmark/kmod/`](sram-benchmark/kmod/) | `rp1_pio_sram.ko` kernel module for cyclic DMA |
-| [`sram-benchmark/m3core1/`](sram-benchmark/m3core1/) | M3 Core 1 bootstrap, PIO FIFO tests, bridge benchmark |
-| [`sram-benchmark/DESIGN.md`](sram-benchmark/DESIGN.md) | Detailed SRAM memory map, firmware analysis, DMA configuration |
+| [`throughput-cyclic-dma/`](throughput-cyclic-dma/) | SRAM/DRAM cyclic DMA benchmark, kernel module, M3 Core 1 tools |
+| [`throughput-cyclic-dma/kmod/`](throughput-cyclic-dma/kmod/) | `rp1_pio_sram.ko` kernel module for cyclic DMA |
+| [`throughput-cyclic-dma/m3core1/`](throughput-cyclic-dma/m3core1/) | M3 Core 1 bootstrap, PIO FIFO tests, bridge benchmark |
+| [`throughput-cyclic-dma/DESIGN.md`](throughput-cyclic-dma/DESIGN.md) | Detailed SRAM memory map, firmware analysis, DMA configuration |
 | [`latency/`](latency/) | GPIO latency benchmark (L0--L3, RPi4 stimulus + RPi5 echo) |
 | [`gpio-loopback/`](gpio-loopback/) | GPIO loopback throughput benchmark (1-bit serial, ~2 MB/s) |
 | [`toggle/`](toggle/) | GPIO toggle frequency benchmark with Glasgow capture |

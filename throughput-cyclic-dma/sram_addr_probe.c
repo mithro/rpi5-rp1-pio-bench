@@ -22,7 +22,7 @@
 #include <string.h>
 
 #include "piolib.h"
-#include "../benchmark/loopback.pio.h"
+#include "../throughput-piolib/loopback.pio.h"
 
 #define SRAM_IOC_MAGIC     'S'
 #define SRAM_IOC_PROBE_ADDR _IOW(SRAM_IOC_MAGIC, 5, uint64_t)

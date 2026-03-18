@@ -15,9 +15,9 @@ CC       ?= gcc
 CFLAGS   := -Wall -Wextra -Werror -O2 -std=c11
 
 # Portable source files (from benchmark/ directory)
-PORTABLE_SRCS := ../benchmark/benchmark_stats.c \
-                 ../benchmark/benchmark_verify.c \
-                 ../benchmark/benchmark_format.c
+PORTABLE_SRCS := ../throughput-piolib/benchmark_stats.c \
+                 ../throughput-piolib/benchmark_verify.c \
+                 ../throughput-piolib/benchmark_format.c
 
 BENCH_CFLAGS  := $(CFLAGS) -I../benchmark -I/usr/include/piolib
 BENCH_LDFLAGS := -lpio -lpthread -lm
@@ -43,9 +43,9 @@ endif
 
 # ─── Target: fifo_probe (requires PIO + /dev/mem) ───────────
 fifo_probe: fifo_probe.c $(PORTABLE_SRCS) \
-            ../benchmark/loopback.pio.h \
-            ../benchmark/benchmark_stats.h ../benchmark/benchmark_verify.h \
-            ../benchmark/benchmark_format.h
+            ../throughput-piolib/loopback.pio.h \
+            ../throughput-piolib/benchmark_stats.h ../throughput-piolib/benchmark_verify.h \
+            ../throughput-piolib/benchmark_format.h
 ifeq ($(FORCE_BUILD),1)
 	$(CC) $(BENCH_CFLAGS) -o $@ fifo_probe.c $(PORTABLE_SRCS) $(BENCH_LDFLAGS)
 else ifeq ($(IS_RPI5),yes)
@@ -57,7 +57,7 @@ else
 endif
 
 # ─── Target: sram_dma_bench (requires rp1_pio_sram.ko) ──────
-sram_dma_bench: sram_dma_bench.c ../benchmark/loopback.pio.h
+sram_dma_bench: sram_dma_bench.c ../throughput-piolib/loopback.pio.h
 ifeq ($(FORCE_BUILD),1)
 	$(CC) $(BENCH_CFLAGS) -o $@ sram_dma_bench.c -lpio -lm -lpthread
 else ifeq ($(IS_RPI5),yes)
@@ -69,7 +69,7 @@ else
 endif
 
 # ─── Target: sram_addr_probe (requires rp1_pio_sram.ko) ──────
-sram_addr_probe: sram_addr_probe.c ../benchmark/loopback.pio.h
+sram_addr_probe: sram_addr_probe.c ../throughput-piolib/loopback.pio.h
 ifeq ($(FORCE_BUILD),1)
 	$(CC) $(BENCH_CFLAGS) -o $@ sram_addr_probe.c -lpio -lm
 else ifeq ($(IS_RPI5),yes)
