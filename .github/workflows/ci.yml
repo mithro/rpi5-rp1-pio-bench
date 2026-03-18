@@ -60,8 +60,8 @@ jobs:
           echo "deb [signed-by=/etc/apt/keyrings/raspberrypi-archive-keyring.gpg] https://archive.raspberrypi.com/debian/ bookworm main" | sudo tee /etc/apt/sources.list.d/raspberrypi.list
           sudo apt-get update
 
-      - name: Install libpio-dev
-        run: sudo apt-get install -y libpio-dev
+      - name: Install libpio-dev and RPi kernel headers
+        run: sudo apt-get install -y libpio-dev linux-libc-dev
 
       - name: Build throughput-piolib
         working-directory: throughput-piolib
