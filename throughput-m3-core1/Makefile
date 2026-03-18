@@ -16,9 +16,13 @@ CC       := gcc
 ASFLAGS  := -mcpu=cortex-m3 -mthumb
 CFLAGS   := -Wall -Wextra -Werror -O2 -std=c11
 
-.PHONY: all clean
+.PHONY: all firmware clean
 
-all: sram_write_test.bin pio_fifo_test.bin pio_bridge.bin clock_test.bin pio_addr_test.bin core1_launcher m3_bridge_bench
+FIRMWARE_BINS := sram_write_test.bin pio_fifo_test.bin pio_bridge.bin clock_test.bin pio_addr_test.bin
+
+all: $(FIRMWARE_BINS) core1_launcher m3_bridge_bench
+
+firmware: $(FIRMWARE_BINS)
 
 # ─── Core 1 firmware (common pattern) ─────────────────────
 %.o: %.s
