@@ -46,9 +46,11 @@
 .equ RXEMPTY3,       (1 << 27)   /* FSTAT bit: SM3 RX FIFO empty */
 
 /* Memory addresses */
+/* SRAM layout — buffers must avoid firmware dynamic region (0x9F48-0xA150).
+ * See throughput-cyclic-dma/DESIGN.md for full SRAM map. */
 .equ STATUS,         0x20008D00
-.equ TX_BUF,         0x20009000
-.equ RX_BUF,         0x2000A000
+.equ TX_BUF,         0x2000A200   /* Past firmware dynamic region */
+.equ RX_BUF,         0x2000B200   /* TX + 4KB */
 .equ BUF_WORDS,      1024
 .equ MAGIC,          0xC0DE1234
 

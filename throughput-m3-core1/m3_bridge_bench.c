@@ -37,12 +37,13 @@
 #define BAR2_PHYS   0x1f00400000ULL
 #define BAR2_SIZE   0x00010000
 
-/* SRAM layout */
+/* SRAM layout — buffers must avoid firmware dynamic region (0x9F48-0xA150).
+ * See throughput-cyclic-dma/DESIGN.md for full SRAM map. */
 #define STUB_OFFSET     0x7000
 #define FW_LOAD_OFFSET  0x8B00
 #define STATUS_OFFSET   0x8D00
-#define TX_BUF_OFFSET   0x9000
-#define RX_BUF_OFFSET   0xA000
+#define TX_BUF_OFFSET   0xA200    /* Past firmware dynamic region */
+#define RX_BUF_OFFSET   0xB200    /* TX + 4KB */
 #define BUF_WORDS       1024
 #define BUF_BYTES       (BUF_WORDS * 4)
 
