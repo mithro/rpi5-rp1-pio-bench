@@ -1,4 +1,4 @@
-# sram-benchmark/Makefile — SRAM + cyclic DMA benchmark tools
+# throughput-cyclic-dma/Makefile — SRAM + cyclic DMA benchmark tools
 #
 # Targets:
 #   all            Build all probe tools (requires RPi5 + libpio-dev)
@@ -14,12 +14,12 @@
 CC       ?= gcc
 CFLAGS   := -Wall -Wextra -Werror -O2 -std=c11
 
-# Portable source files (from benchmark/ directory)
+# Portable source files (from throughput-piolib/ directory)
 PORTABLE_SRCS := ../throughput-piolib/benchmark_stats.c \
                  ../throughput-piolib/benchmark_verify.c \
                  ../throughput-piolib/benchmark_format.c
 
-BENCH_CFLAGS  := $(CFLAGS) -I../benchmark -I/usr/include/piolib
+BENCH_CFLAGS  := $(CFLAGS) -I../throughput-piolib -I/usr/include/piolib
 BENCH_LDFLAGS := -lpio -lpthread -lm
 
 # ─── Platform detection ─────────────────────────────────────
