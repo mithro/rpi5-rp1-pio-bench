@@ -101,7 +101,7 @@ See [`hw.md`](hw.md) for the full pin mapping.
 | [`throughput-m3-core1/`](throughput-m3-core1/) | M3 Core 1 bootstrap, PIO FIFO tests, bridge benchmark |
 | [`throughput-cyclic-dma/DESIGN.md`](throughput-cyclic-dma/DESIGN.md) | Detailed SRAM memory map, firmware analysis, DMA configuration |
 | [`latency/`](latency/) | GPIO latency benchmark (L0--L3, RPi4 stimulus + RPi5 echo) |
-| [`gpio-loopback/`](gpio-loopback/) | GPIO loopback throughput benchmark (1-bit serial, ~2 MB/s) |
+| [`throughput-gpio-loopback/`](throughput-gpio-loopback/) | GPIO loopback throughput benchmark (1-bit serial, ~2 MB/s) |
 | [`toggle/`](toggle/) | GPIO toggle frequency benchmark with Glasgow capture |
 | [`docs/`](docs/) | RP1 PIO firmware communication and M3 register documentation |
 | [`hw.md`](hw.md) | Hardware setup, Pmod HAT pin mapping, jumper connections |
