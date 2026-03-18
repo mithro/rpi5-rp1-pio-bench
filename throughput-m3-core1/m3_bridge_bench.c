@@ -28,6 +28,8 @@
 #include <time.h>
 #include <getopt.h>
 #include <math.h>
+#include <libgen.h>
+#include <linux/limits.h>
 #include <misc/rp1_pio_if.h>
 #include <piolib/piolib.h>
 
@@ -401,10 +403,22 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    /* Step 3: Load bridge firmware */
+    /* Step 3: Load bridge firmware (look in binary's directory) */
     if (!json) printf("[3] Loading bridge firmware...\n");
-    if (load_firmware("pio_bridge.bin") < 0)
-        return 1;
+    {
+        char fw_path[PATH_MAX];
+        char self[PATH_MAX];
+        ssize_t len = readlink("/proc/self/exe", self, sizeof(self) - 1);
+        if (len > 0) {
+            self[len] = '\0';
+            char *dir = dirname(self);
+            snprintf(fw_path, sizeof(fw_path), "%s/pio_bridge.bin", dir);
+        } else {
+            snprintf(fw_path, sizeof(fw_path), "pio_bridge.bin");
+        }
+        if (load_firmware(fw_path) < 0)
+            return 1;
+    }
 
     /* Step 4: Fill TX buffer with test pattern */
     if (!json) printf("[4] Filling TX buffer (pattern=%s, %d words)...\n",
