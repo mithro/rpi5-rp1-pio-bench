@@ -93,21 +93,23 @@ See [`hw.md`](hw.md) for the full pin mapping.
 
 ## Repository Structure
 
+**Benchmarks:**
+
+| Path | What it measures |
+|------|------------------|
+| [`throughput-piolib/`](throughput-piolib/) | DMA throughput via standard piolib ioctl API |
+| [`throughput-cyclic-dma/`](throughput-cyclic-dma/) | DMA throughput via cyclic DMA with SRAM/DRAM ring buffers |
+| [`throughput-m3-core1/`](throughput-m3-core1/) | PIO FIFO throughput via M3 Core 1 CPU polling |
+| [`throughput-gpio-loopback/`](throughput-gpio-loopback/) | DMA throughput via 1-bit GPIO serial loopback |
+| [`latency-gpio/`](latency-gpio/) | Round-trip GPIO latency (L0-L3 abstraction layers) |
+| [`toggle-frequency/`](toggle-frequency/) | GPIO toggle frequency at various PIO clock dividers |
+
+**Documentation and tools:**
+
 | Path | Description |
 |------|-------------|
-| [`throughput-piolib/`](throughput-piolib/) | Standard DMA loopback throughput benchmark (`pio_loopback`) |
-| [`throughput-cyclic-dma/`](throughput-cyclic-dma/) | SRAM/DRAM cyclic DMA benchmark, kernel module, M3 Core 1 tools |
-| [`throughput-cyclic-dma/kmod/`](throughput-cyclic-dma/kmod/) | `rp1_pio_sram.ko` kernel module for cyclic DMA |
-| [`throughput-m3-core1/`](throughput-m3-core1/) | M3 Core 1 bootstrap, PIO FIFO tests, bridge benchmark |
-| [`throughput-cyclic-dma/DESIGN.md`](throughput-cyclic-dma/DESIGN.md) | Detailed SRAM memory map, firmware analysis, DMA configuration |
-| [`latency-gpio/`](latency-gpio/) | GPIO latency benchmark (L0--L3, RPi4 stimulus + RPi5 echo) |
-| [`throughput-gpio-loopback/`](throughput-gpio-loopback/) | GPIO loopback throughput benchmark (1-bit serial, ~2 MB/s) |
-| [`toggle-frequency/`](toggle-frequency/) | GPIO toggle frequency benchmark with Glasgow capture |
-| [`docs/`](docs/) | RP1 PIO firmware communication and M3 register documentation |
 | [`hw.md`](hw.md) | Hardware setup, Pmod HAT pin mapping, jumper connections |
-| [`docs/rp1-dma.md`](docs/rp1-dma.md) | RP1 DMA architecture and the 10 MB/s throughput wall |
-| [`docs/rp1-dma-registers.md`](docs/rp1-dma-registers.md) | RP1 PIO register map, DMA data path, worked examples |
-| [`docs/resources.md`](docs/resources.md) | Datasheets, source repos, kernel PRs, community projects |
+| [`docs/`](docs/) | RP1 DMA architecture, PIO register maps, firmware protocol, resources |
 | [`verify_pmod_connections.py`](verify_pmod_connections.py) | GPIO connection test script for Pmod wiring |
 
 ## References
