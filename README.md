@@ -8,22 +8,25 @@ The RP1 is the southbridge chip on the Raspberry Pi 5, connected to the BCM2712 
 
 This repository measures DMA throughput and GPIO latency between the ARM host and the RP1's PIO block using several approaches: standard kernel DMA via `piolib`, cyclic DMA through a custom kernel module with SRAM-backed ring buffers, and direct PIO access from the RP1's M3 Core 1. It also documents RP1 hardware quirks and the kernel patches that affect performance.
 
+Pre-built binaries for all benchmarks are available from [GitHub Actions](https://github.com/mithro/rpi5-rp1-pio-bench/actions).
+
 ## Throughput Results
 
-All throughput values are in **MB/s (megabytes per second)**, not Mbit/s. The RP1 datasheet uses Mbit/s in some places; those figures have been divided by 8 where referenced. Measured on 2026-03-17 (fresh boot, kernel 6.12+, both [PR #6994](https://github.com/raspberrypi/linux/pull/6994) and [PR #7190](https://github.com/raspberrypi/linux/pull/7190) applied).
+All throughput values are in **MB/s (megabytes per second)**, not Mbit/s. Measured on 2026-03-17 (fresh boot, kernel 6.12+, both [PR #6994](https://github.com/raspberrypi/linux/pull/6994) and [PR #7190](https://github.com/raspberrypi/linux/pull/7190) applied).
 
-| Approach | TX (MB/s) | RX (MB/s) | Tool | Notes |
-|----------|----------:|----------:|------|-------|
-| RX-only DMA, DRAM | -- | 56 | `sram_dma_bench --rx-only` | Single-direction, kernel module |
-| Cyclic DMA, SRAM bidirectional | 54 | 45 | `sram_dma_bench --sram` | SRAM ring buffers at 0xA200+ |
-| TX-only DMA, DRAM | 41 | -- | `sram_dma_bench --tx-only` | Single-direction, kernel module |
-| Cyclic DMA, DRAM bidirectional | 40 | 36 | `sram_dma_bench --dram` | Standard DRAM ring buffers |
-| Standard kernel DMA (piolib ioctl) | ~42 | ~42 | `throughput-piolib/pio_loopback` | Concurrent TX+RX via pthreads |
-| piolib ioctl (benchmark tool) | 18 | 18 | `sram_dma_bench --piolib` | Sequential ioctl calls |
-| M3 Core 1 CPU-polled | 7 | 7 | `m3_bridge_bench` | APB bus bottleneck (see below) |
-| cleverca22 custom driver (reference) | -- | ~66 | -- | Host-side DMA with custom driver, not M3 Core 1 |
+| Approach | TX (MB/s) | RX (MB/s) | Benchmark | Notes |
+|----------|----------:|----------:|-----------|-------|
+| Cyclic DMA, SRAM bidirectional | 54 | 45 | [throughput-cyclic-dma](throughput-cyclic-dma/) `--sram` | SRAM ring buffers at 0xA200+ |
+| RX-only DMA, DRAM | -- | 56 | [throughput-cyclic-dma](throughput-cyclic-dma/) `--rx-only` | Single-direction, kernel module |
+| TX-only DMA, DRAM | 41 | -- | [throughput-cyclic-dma](throughput-cyclic-dma/) `--tx-only` | Single-direction, kernel module |
+| Cyclic DMA, DRAM bidirectional | 40 | 36 | [throughput-cyclic-dma](throughput-cyclic-dma/) `--dram` | Standard DRAM ring buffers |
+| Standard kernel DMA | ~42 | ~42 | [throughput-piolib](throughput-piolib/) | piolib ioctl, concurrent TX+RX via pthreads |
+| piolib ioctl (sequential) | 18 | 18 | [throughput-cyclic-dma](throughput-cyclic-dma/) `--piolib` | Sequential ioctl calls |
+| GPIO serial loopback | ~2 | ~2 | [throughput-gpio-loopback](throughput-gpio-loopback/) | 1-bit serial, 32x DMA expansion |
+| M3 Core 1 CPU-polled | 7 | 7 | [throughput-m3-core1](throughput-m3-core1/) | APB bus bottleneck |
+| cleverca22 custom driver (ref) | -- | ~66 | -- | Host-side DMA, [custom driver](https://github.com/cleverca22/libsigrok/commit/e3783bac8176e7454863b37723ab6d8a3f99731a) |
 
-For detailed analysis including hardware findings, SRAM memory map, firmware reverse-engineering, and DMA configuration, see [`throughput-cyclic-dma/DESIGN.md`](throughput-cyclic-dma/DESIGN.md).
+See individual benchmark [Results](throughput-cyclic-dma/RESULTS.md) for full details.
 
 ## Latency Results
 
@@ -36,11 +39,23 @@ Measured over 1000 iterations, 50 warmup, GPIO4/GPIO5 (JC connector), kernel 6.1
 | L2 | PIO + single-word DMA | 52 us | 134x |
 | L3 | Batched 4 KB DMA read | 89 us | 229x |
 
-L1 is 113x L0 because each `pio_sm_get/put` requires an ioctl through the kernel into the RP1 firmware mailbox. See [latency-gpio/RESULTS.md](latency-gpio/RESULTS.md) for full statistics (min, P95, P99, max, stddev).
+See [latency-gpio/RESULTS.md](latency-gpio/RESULTS.md) for full statistics (min, P95, P99, max, stddev).
 
-## Benchmark Tools
+## Benchmarks
 
-### `throughput-piolib/pio_loopback` -- Standard DMA Throughput
+### [throughput-cyclic-dma](throughput-cyclic-dma/) -- Cyclic DMA Throughput
+
+Uses a custom kernel module (`rp1_pio_sram.ko`) to set up cyclic DMA transfers with configurable ring buffer locations (SRAM or DRAM), burst sizes, and period sizes. Supports unidirectional TX-only and RX-only modes.
+
+```bash
+cd throughput-cyclic-dma && make
+sudo insmod kmod/rp1_pio_sram.ko
+sudo ./sram_dma_bench --sram
+```
+
+[Results](throughput-cyclic-dma/RESULTS.md) | [Design](throughput-cyclic-dma/DESIGN.md) | [Usage](throughput-cyclic-dma/USAGE.md)
+
+### [throughput-piolib](throughput-piolib/) -- Standard DMA Throughput
 
 Measures round-trip DMA throughput using `pio_sm_xfer_data()` (the standard piolib interface). A 3-instruction PIO program performs bitwise NOT in a loop; TX and RX run concurrently in separate pthreads.
 
@@ -49,38 +64,9 @@ cd throughput-piolib && make benchmark
 sudo ./pio_loopback --iterations=20
 ```
 
-### `throughput-cyclic-dma/sram_dma_bench` -- Cyclic DMA Throughput
+[Results](throughput-piolib/RESULTS.md) | [Design](throughput-piolib/DESIGN.md) | [Usage](throughput-piolib/USAGE.md)
 
-Uses a custom kernel module (`throughput-cyclic-dma/kmod/rp1_pio_sram.ko`) to set up cyclic DMA transfers with configurable ring buffer locations (SRAM or DRAM), burst sizes, and period sizes.
-
-```bash
-cd throughput-cyclic-dma && make
-sudo insmod kmod/rp1_pio_sram.ko
-sudo ./sram_dma_bench --sram    # SRAM ring buffers
-sudo ./sram_dma_bench --dram    # DRAM ring buffers
-sudo ./sram_dma_bench --rx-only # Single-direction RX
-```
-
-### `throughput-m3-core1/m3_bridge_bench` -- M3 Core 1 Access
-
-Bootstraps the RP1's second ARM Cortex-M3 core via SEV and measures PIO FIFO throughput with direct CPU polling from the M3 side.
-
-```bash
-cd throughput-m3-core1 && make
-sudo ./m3_bridge_bench
-```
-
-### `latency-gpio/run_latency_benchmark.py` -- GPIO Latency
-
-Coordinates RPi4 (stimulus) and RPi5 (echo) over SSH to measure round-trip GPIO latency at each abstraction layer.
-
-```bash
-uv run python latency-gpio/run_latency_benchmark.py --tests L0 L1 L2 L3
-```
-
-Requires two devices connected via GPIO4/GPIO5 (Pmod JC connector). See [`hw.md`](hw.md) for wiring.
-
-### `throughput-gpio-loopback/gpio_loopback` -- GPIO Loopback Throughput
+### [throughput-gpio-loopback](throughput-gpio-loopback/) -- GPIO Loopback Throughput
 
 Measures DMA throughput through a 1-bit GPIO serial loopback. PIO serialises each 32-bit word to a single GPIO pin and deserialises on input, creating 32x DMA expansion.
 
@@ -89,7 +75,30 @@ cd throughput-gpio-loopback && make
 sudo ./gpio_loopback
 ```
 
-### `toggle-frequency/toggle_rpi5` -- Toggle Frequency
+[Results](throughput-gpio-loopback/RESULTS.md) | [Design](throughput-gpio-loopback/DESIGN.md) | [Usage](throughput-gpio-loopback/USAGE.md)
+
+### [throughput-m3-core1](throughput-m3-core1/) -- M3 Core 1 PIO Access
+
+Bootstraps the RP1's second ARM Cortex-M3 core via SEV and measures PIO FIFO throughput with direct CPU polling from the M3 side.
+
+```bash
+cd throughput-m3-core1 && make
+sudo ./m3_bridge_bench
+```
+
+[Results](throughput-m3-core1/RESULTS.md) | [Design](throughput-m3-core1/DESIGN.md) | [Usage](throughput-m3-core1/USAGE.md)
+
+### [latency-gpio](latency-gpio/) -- GPIO Latency
+
+Coordinates RPi4 (stimulus) and RPi5 (echo) over SSH to measure round-trip GPIO latency at each abstraction layer. Requires two devices connected via GPIO4/GPIO5 (Pmod JC connector).
+
+```bash
+uv run python latency-gpio/run_latency_benchmark.py --tests L0 L1 L2 L3
+```
+
+[Results](latency-gpio/RESULTS.md) | [Design](latency-gpio/DESIGN.md) | [Usage](latency-gpio/USAGE.md)
+
+### [toggle-frequency](toggle-frequency/) -- Toggle Frequency
 
 Measures GPIO toggle frequency at various PIO clock dividers, using a Glasgow Interface Explorer as an independent frequency counter.
 
@@ -97,6 +106,8 @@ Measures GPIO toggle frequency at various PIO clock dividers, using a Glasgow In
 cd toggle-frequency && make
 uv run python run_toggle_benchmark.py
 ```
+
+[Results](toggle-frequency/RESULTS.md) | [Design](toggle-frequency/DESIGN.md) | [Usage](toggle-frequency/USAGE.md)
 
 ## Hardware Setup
 
@@ -107,28 +118,7 @@ uv run python run_toggle_benchmark.py
   - [PR #6994](https://github.com/raspberrypi/linux/pull/6994) (2025-08): Heavy DMA channel reservation
   - [PR #7190](https://github.com/raspberrypi/linux/pull/7190) (2026-01): FIFO threshold fix (prevents data corruption)
 
-See [`hw.md`](hw.md) for the full pin mapping.
-
-## Repository Structure
-
-**Benchmarks:**
-
-| Path | What it measures |
-|------|------------------|
-| [`throughput-piolib/`](throughput-piolib/) | DMA throughput via standard piolib ioctl API |
-| [`throughput-cyclic-dma/`](throughput-cyclic-dma/) | DMA throughput via cyclic DMA with SRAM/DRAM ring buffers |
-| [`throughput-m3-core1/`](throughput-m3-core1/) | PIO FIFO throughput via M3 Core 1 CPU polling |
-| [`throughput-gpio-loopback/`](throughput-gpio-loopback/) | DMA throughput via 1-bit GPIO serial loopback |
-| [`latency-gpio/`](latency-gpio/) | Round-trip GPIO latency (L0-L3 abstraction layers) |
-| [`toggle-frequency/`](toggle-frequency/) | GPIO toggle frequency at various PIO clock dividers |
-
-**Documentation and tools:**
-
-| Path | Description |
-|------|-------------|
-| [`hw.md`](hw.md) | Hardware setup, Pmod HAT pin mapping, jumper connections |
-| [`docs/`](docs/) | RP1 DMA architecture, PIO register maps, firmware protocol, resources |
-| [`verify_pmod_connections.py`](verify_pmod_connections.py) | GPIO connection test script for Pmod wiring |
+See [`hw.md`](hw.md) for the full pin mapping. Additional RP1 documentation is in [`docs/`](docs/).
 
 ## References
 
