@@ -8,13 +8,15 @@
 CC       ?= gcc
 CFLAGS   := -Wall -Wextra -Werror -O2 -std=c11
 
-# Portable source files (from benchmark/ directory)
-PORTABLE_SRCS := ../throughput-piolib/benchmark_stats.c \
-                 ../throughput-piolib/benchmark_verify.c \
-                 ../throughput-piolib/benchmark_format.c
+# Shared library files (from lib/ directory)
+LIB_DIR      := ../lib
+LIB_SRCS     := $(LIB_DIR)/benchmark_stats.c \
+                $(LIB_DIR)/benchmark_verify.c \
+                $(LIB_DIR)/benchmark_format.c
+LIB_CFLAGS   := -I$(LIB_DIR)
 
-SRCS          := gpio_loopback.c $(PORTABLE_SRCS)
-BENCH_CFLAGS  := $(CFLAGS) -I../throughput-piolib -I/usr/include/piolib
+SRCS          := gpio_loopback.c $(LIB_SRCS)
+BENCH_CFLAGS  := $(CFLAGS) $(LIB_CFLAGS) -I/usr/include/piolib
 BENCH_LDFLAGS := -lpio -lpthread -lm
 
 # ─── Platform detection ─────────────────────────────────────
@@ -25,8 +27,8 @@ IS_RPI5 := $(shell test -e /dev/pio0 && echo yes || echo no)
 benchmark: gpio_loopback
 
 gpio_loopback: $(SRCS) gpio_loopback.pio.h \
-               ../throughput-piolib/benchmark_stats.h ../throughput-piolib/benchmark_verify.h \
-               ../throughput-piolib/benchmark_format.h
+               $(LIB_DIR)/benchmark_stats.h $(LIB_DIR)/benchmark_verify.h \
+               $(LIB_DIR)/benchmark_format.h
 ifeq ($(FORCE_BUILD),1)
 	$(CC) $(BENCH_CFLAGS) -o $@ $(SRCS) $(BENCH_LDFLAGS)
 else ifeq ($(IS_RPI5),yes)

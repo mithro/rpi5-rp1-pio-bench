@@ -9,9 +9,10 @@
 CC       ?= gcc
 CFLAGS   := -Wall -Wextra -Werror -O2 -std=c11
 
-# Shared stats module from the benchmark directory
-STATS_SRC := ../throughput-piolib/benchmark_stats.c
-STATS_INC := -I../throughput-piolib
+# Shared library files (from lib/ directory)
+LIB_DIR   := ../lib
+STATS_SRC := $(LIB_DIR)/benchmark_stats.c
+STATS_INC := -I$(LIB_DIR)
 
 # ─── Platform detection ─────────────────────────────────
 IS_RPI5   := $(shell test -e /dev/pio0 && echo yes || echo no)
@@ -26,7 +27,7 @@ RPi4_LDFLAGS := -lm
 .PHONY: rpi4
 rpi4: latency_rpi4
 
-latency_rpi4: $(RPi4_SRCS) latency_common.h ../throughput-piolib/benchmark_stats.h
+latency_rpi4: $(RPi4_SRCS) latency_common.h $(LIB_DIR)/benchmark_stats.h
 ifeq ($(IS_RPI4),yes)
 	$(CC) $(RPi4_CFLAGS) -o $@ $(RPi4_SRCS) $(RPi4_LDFLAGS)
 else ifeq ($(FORCE_BUILD),1)
@@ -45,7 +46,7 @@ RPi5_LDFLAGS := -lpio -lpthread -lm
 .PHONY: rpi5
 rpi5: latency_rpi5
 
-latency_rpi5: $(RPi5_SRCS) latency_common.h gpio_echo.pio.h edge_detector.pio.h output_driver.pio.h ../throughput-piolib/benchmark_stats.h
+latency_rpi5: $(RPi5_SRCS) latency_common.h gpio_echo.pio.h edge_detector.pio.h output_driver.pio.h $(LIB_DIR)/benchmark_stats.h
 ifeq ($(IS_RPI5),yes)
 	$(CC) $(RPi5_CFLAGS) -o $@ $(RPi5_SRCS) $(RPi5_LDFLAGS)
 else ifeq ($(FORCE_BUILD),1)

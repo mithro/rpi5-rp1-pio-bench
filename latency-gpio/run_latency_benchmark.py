@@ -199,7 +199,7 @@ def sync_source(
     log(f"  Syncing source to {label}...")
 
     # Sync the latency directory and shared benchmark stats
-    for subdir in ["latency-gpio/", "throughput-piolib/"]:
+    for subdir in ["latency-gpio/", "lib/"]:
         local_path = local_dir / subdir
         if not local_path.exists():
             log(f"  ERROR: Local path {local_path} does not exist")

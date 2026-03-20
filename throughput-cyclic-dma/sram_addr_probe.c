@@ -9,7 +9,7 @@
  * Requires: RPi5, sudo, libpio-dev, rp1_pio_sram.ko loaded
  *
  * Build: gcc -Wall -Wextra -O2 -o sram_addr_probe sram_addr_probe.c \
- *        -I/usr/include/piolib -I../throughput-piolib -lpio -lm
+ *        -I/usr/include/piolib -I../lib -lpio -lm
  * Run:   sudo ./sram_addr_probe
  */
 #define _DEFAULT_SOURCE
@@ -22,7 +22,7 @@
 #include <string.h>
 
 #include "piolib.h"
-#include "../throughput-piolib/loopback.pio.h"
+#include "../lib/loopback.pio.h"
 
 #define SRAM_IOC_MAGIC     'S'
 #define SRAM_IOC_PROBE_ADDR _IOW(SRAM_IOC_MAGIC, 5, uint64_t)

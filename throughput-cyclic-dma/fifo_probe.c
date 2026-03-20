@@ -6,9 +6,9 @@
  *
  * Requires: RPi5, sudo, libpio-dev
  *
- * Build: gcc -O2 -I../throughput-piolib -I/usr/include/piolib -o fifo_probe \
- *        fifo_probe.c ../throughput-piolib/benchmark_stats.c \
- *        ../throughput-piolib/benchmark_verify.c ../throughput-piolib/benchmark_format.c \
+ * Build: gcc -O2 -I../lib -I/usr/include/piolib -o fifo_probe \
+ *        fifo_probe.c ../lib/benchmark_stats.c \
+ *        ../lib/benchmark_verify.c ../lib/benchmark_format.c \
  *        -lpio -lpthread -lm
  * Run:   sudo ./fifo_probe
  */
@@ -28,7 +28,7 @@
 #include <unistd.h>
 
 #include "piolib.h"
-#include "../throughput-piolib/loopback.pio.h"
+#include "../lib/loopback.pio.h"
 
 #include "benchmark_format.h"
 #include "benchmark_stats.h"

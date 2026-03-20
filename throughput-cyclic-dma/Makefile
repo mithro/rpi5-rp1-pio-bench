@@ -14,12 +14,14 @@
 CC       ?= gcc
 CFLAGS   := -Wall -Wextra -Werror -O2 -std=c11
 
-# Portable source files (from throughput-piolib/ directory)
-PORTABLE_SRCS := ../throughput-piolib/benchmark_stats.c \
-                 ../throughput-piolib/benchmark_verify.c \
-                 ../throughput-piolib/benchmark_format.c
+# Shared library files (from lib/ directory)
+LIB_DIR      := ../lib
+LIB_SRCS     := $(LIB_DIR)/benchmark_stats.c \
+                $(LIB_DIR)/benchmark_verify.c \
+                $(LIB_DIR)/benchmark_format.c
+LIB_CFLAGS   := -I$(LIB_DIR)
 
-BENCH_CFLAGS  := $(CFLAGS) -I../throughput-piolib -I/usr/include/piolib
+BENCH_CFLAGS  := $(CFLAGS) $(LIB_CFLAGS) -I/usr/include/piolib
 BENCH_LDFLAGS := -lpio -lpthread -lm
 
 # ─── Platform detection ─────────────────────────────────────
@@ -42,14 +44,14 @@ else
 endif
 
 # ─── Target: fifo_probe (requires PIO + /dev/mem) ───────────
-fifo_probe: fifo_probe.c $(PORTABLE_SRCS) \
-            ../throughput-piolib/loopback.pio.h \
-            ../throughput-piolib/benchmark_stats.h ../throughput-piolib/benchmark_verify.h \
-            ../throughput-piolib/benchmark_format.h
+fifo_probe: fifo_probe.c $(LIB_SRCS) \
+            $(LIB_DIR)/loopback.pio.h \
+            $(LIB_DIR)/benchmark_stats.h $(LIB_DIR)/benchmark_verify.h \
+            $(LIB_DIR)/benchmark_format.h
 ifeq ($(FORCE_BUILD),1)
-	$(CC) $(BENCH_CFLAGS) -o $@ fifo_probe.c $(PORTABLE_SRCS) $(BENCH_LDFLAGS)
+	$(CC) $(BENCH_CFLAGS) -o $@ fifo_probe.c $(LIB_SRCS) $(BENCH_LDFLAGS)
 else ifeq ($(IS_RPI5),yes)
-	$(CC) $(BENCH_CFLAGS) -o $@ fifo_probe.c $(PORTABLE_SRCS) $(BENCH_LDFLAGS)
+	$(CC) $(BENCH_CFLAGS) -o $@ fifo_probe.c $(LIB_SRCS) $(BENCH_LDFLAGS)
 else
 	@echo "ERROR: fifo_probe requires RPi5 with /dev/pio0 and libpio-dev"
 	@echo "Use FORCE_BUILD=1 to override."
@@ -57,7 +59,7 @@ else
 endif
 
 # ─── Target: sram_dma_bench (requires rp1_pio_sram.ko) ──────
-sram_dma_bench: sram_dma_bench.c ../throughput-piolib/loopback.pio.h
+sram_dma_bench: sram_dma_bench.c $(LIB_DIR)/loopback.pio.h
 ifeq ($(FORCE_BUILD),1)
 	$(CC) $(BENCH_CFLAGS) -o $@ sram_dma_bench.c -lpio -lm -lpthread
 else ifeq ($(IS_RPI5),yes)
@@ -69,7 +71,7 @@ else
 endif
 
 # ─── Target: sram_addr_probe (requires rp1_pio_sram.ko) ──────
-sram_addr_probe: sram_addr_probe.c ../throughput-piolib/loopback.pio.h
+sram_addr_probe: sram_addr_probe.c $(LIB_DIR)/loopback.pio.h
 ifeq ($(FORCE_BUILD),1)
 	$(CC) $(BENCH_CFLAGS) -o $@ sram_addr_probe.c -lpio -lm
 else ifeq ($(IS_RPI5),yes)

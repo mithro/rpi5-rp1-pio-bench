@@ -31,7 +31,7 @@
 #include <unistd.h>
 
 #include "piolib.h"
-#include "../throughput-piolib/loopback.pio.h"
+#include "../lib/loopback.pio.h"
 
 /* ─── Unidirectional PIO programs ──────────────────────────────── */
 

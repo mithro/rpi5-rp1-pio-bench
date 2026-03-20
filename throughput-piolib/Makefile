@@ -12,21 +12,25 @@
 CC       ?= gcc
 CFLAGS   := -Wall -Wextra -Werror -O2 -std=c11
 
-# Portable source files (no hardware dependency)
-PORTABLE_SRCS := benchmark_stats.c benchmark_verify.c benchmark_format.c
+# Shared library files (from lib/ directory)
+LIB_DIR      := ../lib
+LIB_SRCS     := $(LIB_DIR)/benchmark_stats.c \
+                $(LIB_DIR)/benchmark_verify.c \
+                $(LIB_DIR)/benchmark_format.c
+LIB_CFLAGS   := -I$(LIB_DIR)
 
 # ─── Platform detection ─────────────────────────────────────
 IS_RPI5 := $(shell test -e /dev/pio0 && echo yes || echo no)
 
 # ─── Target: test (always buildable) ────────────────────────
-TEST_SRCS    := benchmark_test.c $(PORTABLE_SRCS)
-TEST_CFLAGS  := $(CFLAGS) -DPICO_NO_HARDWARE=1
+TEST_SRCS    := benchmark_test.c $(LIB_SRCS)
+TEST_CFLAGS  := $(CFLAGS) $(LIB_CFLAGS) -DPICO_NO_HARDWARE=1
 TEST_LDFLAGS := -lm
 
 .PHONY: test
 test: benchmark_test
 
-benchmark_test: $(TEST_SRCS) benchmark_stats.h benchmark_verify.h benchmark_format.h
+benchmark_test: $(TEST_SRCS) $(LIB_DIR)/benchmark_stats.h $(LIB_DIR)/benchmark_verify.h $(LIB_DIR)/benchmark_format.h
 	$(CC) $(TEST_CFLAGS) -o $@ $(TEST_SRCS) $(TEST_LDFLAGS)
 
 .PHONY: run-test
@@ -34,14 +38,14 @@ run-test: benchmark_test
 	./benchmark_test
 
 # ─── Target: benchmark (RPi5 only) ──────────────────────────
-BENCH_SRCS    := benchmark_main.c $(PORTABLE_SRCS)
-BENCH_CFLAGS  := $(CFLAGS) -I/usr/include/piolib
+BENCH_SRCS    := benchmark_main.c $(LIB_SRCS)
+BENCH_CFLAGS  := $(CFLAGS) $(LIB_CFLAGS) -I/usr/include/piolib
 BENCH_LDFLAGS := -lpio -lpthread -lm
 
 .PHONY: benchmark
 benchmark: pio_loopback
 
-pio_loopback: $(BENCH_SRCS) loopback.pio.h benchmark_stats.h benchmark_verify.h benchmark_format.h
+pio_loopback: $(BENCH_SRCS) $(LIB_DIR)/loopback.pio.h $(LIB_DIR)/benchmark_stats.h $(LIB_DIR)/benchmark_verify.h $(LIB_DIR)/benchmark_format.h
 ifeq ($(FORCE_BUILD),1)
 	$(CC) $(BENCH_CFLAGS) -o $@ $(BENCH_SRCS) $(BENCH_LDFLAGS)
 else ifeq ($(IS_RPI5),yes)
