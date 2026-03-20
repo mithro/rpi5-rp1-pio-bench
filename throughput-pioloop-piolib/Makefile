@@ -1,12 +1,12 @@
-# benchmark/Makefile — Build system for RP1 PIO loopback benchmark
+# throughput-pioloop-piolib/Makefile — PIO internal loopback throughput (piolib DMA)
 #
 # Targets:
+#   all           Build the RPi5 benchmark binary (requires libpio-dev)
 #   test          Build the portable test binary (no hardware deps)
 #   run-test      Build and run the test binary
-#   benchmark     Build the RPi5 benchmark binary (requires libpio-dev)
 #   check-deps    Verify RPi5 build dependencies
 #   install-deps  Install RPi5 dependencies (requires sudo)
-#   pioasm        Regenerate loopback.pio.h from loopback.pio
+#   pioasm        Regenerate pio_loopback.pio.h from pio_loopback.pio
 #   clean         Remove build artifacts
 
 CC       ?= gcc
@@ -22,45 +22,47 @@ LIB_CFLAGS   := -I$(LIB_DIR)
 # ─── Platform detection ─────────────────────────────────────
 IS_RPI5 := $(shell test -e /dev/pio0 && echo yes || echo no)
 
-# ─── Target: test (always buildable) ────────────────────────
-TEST_SRCS    := benchmark_test.c $(LIB_SRCS)
-TEST_CFLAGS  := $(CFLAGS) $(LIB_CFLAGS) -DPICO_NO_HARDWARE=1
-TEST_LDFLAGS := -lm
+# ─── Default target ────────────────────────────────────────
+.PHONY: all
+all: throughput_pioloop_piolib
 
-.PHONY: test
-test: benchmark_test
-
-benchmark_test: $(TEST_SRCS) $(LIB_DIR)/benchmark_stats.h $(LIB_DIR)/benchmark_verify.h $(LIB_DIR)/benchmark_format.h
-	$(CC) $(TEST_CFLAGS) -o $@ $(TEST_SRCS) $(TEST_LDFLAGS)
-
-.PHONY: run-test
-run-test: benchmark_test
-	./benchmark_test
-
-# ─── Target: benchmark (RPi5 only) ──────────────────────────
-BENCH_SRCS    := benchmark_main.c $(LIB_SRCS)
+# ─── Target: throughput_pioloop_piolib (RPi5 only) ─────────
+BENCH_SRCS    := throughput_pioloop_piolib.c $(LIB_SRCS)
 BENCH_CFLAGS  := $(CFLAGS) $(LIB_CFLAGS) -I/usr/include/piolib
 BENCH_LDFLAGS := -lpio -lpthread -lm
 
-.PHONY: benchmark
-benchmark: pio_loopback
-
-pio_loopback: $(BENCH_SRCS) $(LIB_DIR)/loopback.pio.h $(LIB_DIR)/benchmark_stats.h $(LIB_DIR)/benchmark_verify.h $(LIB_DIR)/benchmark_format.h
+throughput_pioloop_piolib: $(BENCH_SRCS) $(LIB_DIR)/pio_loopback.pio.h \
+                           $(LIB_DIR)/benchmark_stats.h $(LIB_DIR)/benchmark_verify.h \
+                           $(LIB_DIR)/benchmark_format.h
 ifeq ($(FORCE_BUILD),1)
 	$(CC) $(BENCH_CFLAGS) -o $@ $(BENCH_SRCS) $(BENCH_LDFLAGS)
 else ifeq ($(IS_RPI5),yes)
 	$(CC) $(BENCH_CFLAGS) -o $@ $(BENCH_SRCS) $(BENCH_LDFLAGS)
 else
-	@echo "ERROR: benchmark target requires RPi5 with /dev/pio0 and libpio-dev"
-	@echo "This machine does not appear to be an RPi5 (no /dev/pio0 found)."
+	@echo "ERROR: requires RPi5 with /dev/pio0 and libpio-dev"
 	@echo "Use FORCE_BUILD=1 to override (e.g., for cross-compilation in CI)."
 	@false
 endif
 
+# ─── Target: test (always buildable) ────────────────────────
+TEST_SRCS    := test_stats.c $(LIB_SRCS)
+TEST_CFLAGS  := $(CFLAGS) $(LIB_CFLAGS) -DPICO_NO_HARDWARE=1
+TEST_LDFLAGS := -lm
+
+.PHONY: test
+test: test_stats
+
+test_stats: $(TEST_SRCS) $(LIB_DIR)/benchmark_stats.h $(LIB_DIR)/benchmark_verify.h $(LIB_DIR)/benchmark_format.h
+	$(CC) $(TEST_CFLAGS) -o $@ $(TEST_SRCS) $(TEST_LDFLAGS)
+
+.PHONY: run-test
+run-test: test_stats
+	./test_stats
+
 # ─── Target: pioasm (regenerate header) ─────────────────────
 .PHONY: pioasm
-pioasm: loopback.pio
-	pioasm $< loopback.pio.h
+pioasm: pio_loopback.pio
+	pioasm $< $(LIB_DIR)/pio_loopback.pio.h
 
 # ─── Target: check-deps (RPi5 only) ─────────────────────────
 .PHONY: check-deps
@@ -79,4 +81,4 @@ install-deps:
 # ─── Target: clean ──────────────────────────────────────────
 .PHONY: clean
 clean:
-	rm -f benchmark_test pio_loopback
+	rm -f test_stats throughput_pioloop_piolib

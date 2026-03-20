@@ -1,12 +1,13 @@
-# m3core1/Makefile — Build Core 1 firmware and host launcher
+# throughput-pioloop-m3poll/Makefile — PIO loopback throughput via M3 Core 1 polling
 #
-# Requires: arm-none-eabi toolchain (for firmware), gcc (for host tool)
+# Requires: arm-none-eabi toolchain (for firmware), gcc (for host tools)
 #
 # Targets:
-#   all             Build firmware + host tool
-#   sram_write_test.bin  Core 1 firmware binary
-#   core1_launcher  Host-side launcher tool
-#   clean           Remove build artifacts
+#   all                        Build firmware + host tools
+#   throughput_pioloop_m3poll  Host-side benchmark binary
+#   core1_launcher             Host-side Core 1 launcher
+#   firmware                   Build all firmware binaries
+#   clean                      Remove build artifacts
 
 AS       := arm-none-eabi-as
 LD       := arm-none-eabi-ld
@@ -18,9 +19,9 @@ CFLAGS   := -Wall -Wextra -Werror -O2 -std=c11
 
 .PHONY: all firmware clean
 
-FIRMWARE_BINS := sram_write_test.bin pio_fifo_test.bin pio_bridge.bin clock_test.bin pio_addr_test.bin
+FIRMWARE_BINS := test_sram_write.bin test_pio_fifo.bin pio_bridge.bin test_clock.bin test_pio_addr.bin
 
-all: $(FIRMWARE_BINS) core1_launcher m3_bridge_bench
+all: $(FIRMWARE_BINS) core1_launcher throughput_pioloop_m3poll
 
 firmware: $(FIRMWARE_BINS)
 
@@ -28,8 +29,8 @@ firmware: $(FIRMWARE_BINS)
 %.o: %.s
 	$(AS) $(ASFLAGS) $< -o $@
 
-%.elf: %.o memmap_core1
-	$(LD) $< -T memmap_core1 -o $@
+%.elf: %.o memmap_core1.ld
+	$(LD) $< -T memmap_core1.ld -o $@
 
 %.bin: %.elf
 	$(OBJCOPY) $< -O binary $@
@@ -38,9 +39,9 @@ firmware: $(FIRMWARE_BINS)
 core1_launcher: core1_launcher.c
 	$(CC) $(CFLAGS) -o $@ $< -lm
 
-m3_bridge_bench: m3_bridge_bench.c
+throughput_pioloop_m3poll: throughput_pioloop_m3poll.c
 	$(CC) $(CFLAGS) -I/usr/include/piolib -o $@ $< -lm -lpio
 
 # ─── Clean ─────────────────────────────────────────────────
 clean:
-	rm -f *.o *.elf *.bin core1_launcher m3_bridge_bench
+	rm -f *.o *.elf *.bin core1_launcher throughput_pioloop_m3poll

@@ -45,7 +45,7 @@ endif
 
 # ─── Target: fifo_probe (requires PIO + /dev/mem) ───────────
 fifo_probe: fifo_probe.c $(LIB_SRCS) \
-            $(LIB_DIR)/loopback.pio.h \
+            $(LIB_DIR)/pio_loopback.pio.h \
             $(LIB_DIR)/benchmark_stats.h $(LIB_DIR)/benchmark_verify.h \
             $(LIB_DIR)/benchmark_format.h
 ifeq ($(FORCE_BUILD),1)
@@ -59,7 +59,7 @@ else
 endif
 
 # ─── Target: sram_addr_probe (requires rp1_pio_sram.ko) ─────
-sram_addr_probe: sram_addr_probe.c $(LIB_DIR)/loopback.pio.h
+sram_addr_probe: sram_addr_probe.c $(LIB_DIR)/pio_loopback.pio.h
 ifeq ($(FORCE_BUILD),1)
 	$(CC) $(BENCH_CFLAGS) -o $@ sram_addr_probe.c -lpio -lm
 else ifeq ($(IS_RPI5),yes)
@@ -95,7 +95,7 @@ else
 endif
 
 # ─── Target: sram_corruption_test (SRAM DMA integrity test) ──
-sram_corruption_test: sram_corruption_test.c $(LIB_DIR)/loopback.pio.h
+sram_corruption_test: sram_corruption_test.c $(LIB_DIR)/pio_loopback.pio.h
 ifeq ($(FORCE_BUILD),1)
 	$(CC) $(BENCH_CFLAGS) -o $@ sram_corruption_test.c -lpio -lm -lpthread
 else ifeq ($(IS_RPI5),yes)
