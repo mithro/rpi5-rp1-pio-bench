@@ -16,7 +16,7 @@
 #include <unistd.h>
 
 #include "piolib.h"
-#include "test_1bit_dma.pio.h"
+#include "alt_1bit_dma.pio.h"
 
 #define SKIP 1  /* 1 garbage word from uninitialized OSR */
 #define TX_DMACTRL 0x80000101u  /* threshold=1 */

@@ -21,7 +21,7 @@
 #include <time.h>
 
 #include "piolib.h"
-#include "loopback.pio.h"
+#include "pio_loopback.pio.h"
 
 #include "benchmark_format.h"
 #include "benchmark_stats.h"

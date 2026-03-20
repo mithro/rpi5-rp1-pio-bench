@@ -30,7 +30,7 @@
 #include "gpio_echo.pio.h"
 #include "edge_detector.pio.h"
 #include "output_driver.pio.h"
-#include "latency_common.h"
+#include "common.h"
 
 /* ─── Signal handling for L0 mode ──────────────────────────── */
 

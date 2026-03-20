@@ -1,4 +1,4 @@
-/* latency_common.h — Shared definitions for PIO latency benchmark
+/* common.h — Shared definitions for PIO latency benchmark
  *
  * Common types, constants, and formatting for both the RPi4 measurement
  * program and the RPi5 PIO latency program.

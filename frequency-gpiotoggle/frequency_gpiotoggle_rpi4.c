@@ -25,7 +25,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
-#include "toggle_common.h"
+#include "common.h"
 
 /* ─── BCM2711 GPIO registers ──────────────────────────────── */
 

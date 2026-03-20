@@ -26,7 +26,7 @@
 #include "piolib.h"
 #include "hardware/clocks.h"
 #include "gpio_toggle.pio.h"
-#include "toggle_common.h"
+#include "common.h"
 
 /* ─── Signal handling ──────────────────────────────────────── */
 

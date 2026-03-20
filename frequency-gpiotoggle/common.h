@@ -1,4 +1,4 @@
-/* toggle_common.h — Shared definitions for PIO toggle frequency benchmark
+/* common.h — Shared definitions for PIO toggle frequency benchmark
  *
  * Common types, constants, and formatting for both the RPi5 toggle generator
  * and the RPi4 frequency measurement program.

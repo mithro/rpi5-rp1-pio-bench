@@ -28,7 +28,7 @@
 #include <unistd.h>
 
 #include "piolib.h"
-#include "../lib/loopback.pio.h"
+#include "../lib/pio_loopback.pio.h"
 
 #include "benchmark_format.h"
 #include "benchmark_stats.h"
