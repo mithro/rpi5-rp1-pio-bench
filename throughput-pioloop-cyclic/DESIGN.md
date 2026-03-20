@@ -278,7 +278,7 @@ Offset 0xA200   8,192 B   TX ring (2 × 4 KB periods)
 Offset 0xC200   8,192 B   RX ring (2 × 4 KB periods)
 ```
 
-Implementation: `kmod/rp1_pio_sram.ko` + `sram_dma_bench.c`
+Implementation: `kmod/rp1_pio_sram.ko` + `throughput_pioloop_cyclic.c`
 
 ### Phase 4: M3 Core 1 Bridge (6.89 MB/s — hardware-limited)
 
@@ -345,11 +345,11 @@ RP1 firmware interference on the shared APB bus.
 due to the APB bridge bottleneck. Cyclic DMA (Phase 3) achieves 40–54 MB/s
 and achieves 6–8× higher throughput than M3 CPU-polled FIFO access.
 
-Implementation: `throughput-m3-core1/pio_bridge.s` + `throughput-m3-core1/m3_bridge_bench.c`
+Implementation: `throughput-pioloop-m3poll/pio_bridge.s` + `throughput-pioloop-m3poll/throughput_pioloop_m3poll.c`
 
 ## M3 Core 1
 
-For M3 Core 1 architecture and PIO access analysis, see [throughput-m3-core1/DESIGN.md](../throughput-m3-core1/DESIGN.md).
+For M3 Core 1 architecture and PIO access analysis, see [throughput-pioloop-m3poll/DESIGN.md](../throughput-pioloop-m3poll/DESIGN.md).
 
 ## References
 
@@ -367,7 +367,7 @@ For M3 Core 1 architecture and PIO access analysis, see [throughput-m3-core1/DES
 | `benchmark_format.{c,h}` | `throughput-piolib/` | Human-readable + JSON output |
 | `benchmark_verify.{c,h}` | `throughput-piolib/` | Pattern generation + verification |
 | mmap pattern | `toggle/toggle_rpi4.c` | `/dev/mem` GPIO mmap (adapt for BAR2) |
-| DMA thread pattern | `throughput-gpio-loopback/gpio_loopback.c` | Pthread-based DMA transfers |
+| DMA thread pattern | `throughput-gpioloop-piolib/throughput_gpioloop_piolib.c` | Pthread-based DMA transfers |
 
 ## See Also
 

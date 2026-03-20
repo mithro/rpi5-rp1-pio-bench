@@ -65,7 +65,7 @@ RPi4 counts round-trips (1 iteration = 2 edges: rising + falling). RPi5 counts i
 
 ## Python Orchestrator
 
-`run_latency_benchmark.py` coordinates the two devices:
+`run.py` coordinates the two devices:
 
 1. Syncs source code to both RPis via rsync
 2. Builds binaries on each RPi via SSH

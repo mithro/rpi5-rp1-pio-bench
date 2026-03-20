@@ -1,4 +1,4 @@
-/* latency_rpi5.c — RPi5 PIO latency benchmark
+/* latency_gpioloop.c — RPi5 PIO latency benchmark
  *
  * Configures RP1 PIO state machines for latency testing across multiple
  * abstraction layers:
@@ -10,8 +10,8 @@
  *
  * Requires RPi5 with libpio-dev installed and root privileges (/dev/pio0).
  *
- * Build: see Makefile (make rpi5)
- * Run:   sudo ./latency_rpi5 [options]
+ * Build: see Makefile (make)
+ * Run:   sudo ./latency_gpioloop [options]
  */
 
 #define _GNU_SOURCE

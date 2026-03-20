@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""run_toggle_benchmark.py — Orchestrate PIO toggle frequency benchmark.
+"""run.py — Orchestrate PIO toggle frequency benchmark.
 
 Coordinates RPi5 (PIO toggle generator) and RPi4 (GPIO edge counter) over SSH
 to sweep clock divider and delay settings, collecting frequency measurements.
 
 Requires:
   - SSH access to both RPi5 and RPi4 (key-based, no password)
-  - toggle_rpi5 compiled on RPi5
-  - toggle_rpi4 compiled on RPi4
+  - frequency_gpiotoggle compiled on RPi5
+  - frequency_gpiotoggle_rpi4 compiled on RPi4
 
 Usage:
-  uv run toggle/run_toggle_benchmark.py [options]
+  uv run frequency-gpiotoggle/run.py [options]
 """
 
 import argparse
@@ -84,7 +84,7 @@ def run_measurement(config, clkdiv, delay):
 
     # Start RPi5 toggle generator in background
     rpi5_cmd = (
-        f"sudo {config.remote_dir}/toggle_rpi5"
+        f"sudo {config.remote_dir}/frequency_gpiotoggle"
         f" --pin {config.pin}"
         f" --clkdiv {clkdiv}"
         f" --delay {delay}"
@@ -100,7 +100,7 @@ def run_measurement(config, clkdiv, delay):
 
     # Run RPi4 edge counter
     rpi4_cmd = (
-        f"{config.remote_dir}/toggle_rpi4"
+        f"{config.remote_dir}/frequency_gpiotoggle_rpi4"
         f" --pin {config.pin}"
         f" --duration-ms {config.duration_ms}"
         f" --json"

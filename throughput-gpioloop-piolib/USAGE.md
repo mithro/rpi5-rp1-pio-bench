@@ -25,7 +25,7 @@ For single-pin loopback, no external wiring is needed -- the pin drives and read
 On the RPi5:
 
 ```sh
-cd throughput-gpio-loopback
+cd throughput-gpioloop-piolib
 make benchmark
 ```
 
@@ -44,7 +44,7 @@ make pioasm
 ## Run
 
 ```sh
-sudo ./gpio_loopback [options]
+sudo ./throughput_gpioloop_piolib [options]
 ```
 
 ### Options
@@ -65,11 +65,11 @@ sudo ./gpio_loopback [options]
 
 ```sh
 # Default: 8 KB, 100 iterations, sequential pattern, single-pin loopback on GPIO5
-sudo ./gpio_loopback
+sudo ./throughput_gpioloop_piolib
 
 # Larger transfer with random data, JSON output
-sudo ./gpio_loopback --size=32768 --pattern=3 --iterations=200 --json
+sudo ./throughput_gpioloop_piolib --size=32768 --pattern=3 --iterations=200 --json
 
 # Two-pin loopback (GPIO5 out, GPIO4 in)
-sudo ./gpio_loopback --output-pin=5 --input-pin=4
+sudo ./throughput_gpioloop_piolib --output-pin=5 --input-pin=4
 ```

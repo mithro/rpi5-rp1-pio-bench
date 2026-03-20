@@ -82,11 +82,11 @@ single-word errors in verify mode.
 | File               | Description                                            |
 |--------------------|--------------------------------------------------------|
 | pio_bridge.s       | Core 1 firmware: SRAM TX buf -> TXF3 -> RXF3 -> SRAM RX buf |
-| m3_bridge_bench.c  | Host benchmark: sets up PIO SM3, launches firmware, measures throughput |
+| throughput_pioloop_m3poll.c | Host benchmark: sets up PIO SM3, launches firmware, measures throughput |
 | core1_launcher.c   | Host tool: loads firmware to SRAM, bootstraps Core 1 via SEV |
-| pio_fifo_test.s    | Core 1 firmware: basic PIO FIFO loopback test (write TXF3, read RXF3) |
-| pio_addr_test.s    | Core 1 firmware: compares PIO access at 0xF0000000 vs 0x40178000 |
-| clock_test.s       | Core 1 firmware: tight SRAM loop to measure M3 clock speed |
-| sram_write_test.s  | Core 1 firmware: basic SRAM write test to verify Core 1 bootstrap |
-| memmap_core1       | Linker script for Core 1 firmware binaries              |
+| test_pio_fifo.s    | Core 1 firmware: basic PIO FIFO loopback test (write TXF3, read RXF3) |
+| test_pio_addr.s    | Core 1 firmware: compares PIO access at 0xF0000000 vs 0x40178000 |
+| test_clock.s       | Core 1 firmware: tight SRAM loop to measure M3 clock speed |
+| test_sram_write.s  | Core 1 firmware: basic SRAM write test to verify Core 1 bootstrap |
+| memmap_core1.ld    | Linker script for Core 1 firmware binaries              |
 | Makefile           | Builds all firmware .bin files and host tools            |

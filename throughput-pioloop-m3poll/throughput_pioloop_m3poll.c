@@ -1,12 +1,12 @@
-/* m3_bridge_bench.c — M3 Core 1 SRAM↔FIFO bridge benchmark
+/* throughput_pioloop_m3poll.c — M3 Core 1 SRAM↔FIFO bridge benchmark
  *
  * Measures throughput of Core 1 moving data through PIO FIFOs:
  *   Host sets up PIO SM3 with autonomous pull→NOT→push program via BAR1.
  *   Host fills TX buffer in SRAM → Core 1 writes TXF3 (SM3 auto-processes),
  *   reads RXF3, writes to RX buffer → Host verifies RX = ~TX.
  *
- * Build: gcc -Wall -Wextra -O2 -o m3_bridge_bench m3_bridge_bench.c -lm
- * Run:   sudo ./m3_bridge_bench [options]
+ * Build: gcc -Wall -Wextra -O2 -o throughput_pioloop_m3poll throughput_pioloop_m3poll.c -lm
+ * Run:   sudo ./throughput_pioloop_m3poll [options]
  *
  * Options:
  *   -t SECS   Benchmark duration (default 5)
@@ -40,7 +40,7 @@
 #define BAR2_SIZE   0x00010000
 
 /* SRAM layout — buffers must avoid firmware dynamic region (0x9F48-0xA150).
- * See throughput-cyclic-dma/DESIGN.md for full SRAM map. */
+ * See throughput-pioloop-cyclic/DESIGN.md for full SRAM map. */
 #define STUB_OFFSET     0x7000
 #define FW_LOAD_OFFSET  0x8B00
 #define STATUS_OFFSET   0x8D00

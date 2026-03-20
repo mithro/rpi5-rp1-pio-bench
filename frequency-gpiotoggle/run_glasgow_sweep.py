@@ -11,12 +11,12 @@ import sys
 import time
 
 RPi5_HOST = "rpi5-pmod.iot.welland.mithis.com"
-TOGGLE_BIN = "/home/tim/rpi5-rp1-pio-bench/toggle-frequency/toggle_rpi5"
+TOGGLE_BIN = "/home/tim/rpi5-rp1-pio-bench/frequency-gpiotoggle/frequency_gpiotoggle"
 GLASGOW_BIN = "/home/tim/.local/share/uv/tools/glasgow/bin/glasgow"
 TOGGLE_PIN = 5
 TOGGLE_DURATION_MS = 30000  # 30 seconds per measurement
 GATE_MS = 1000  # 1 second gate time
-TMP_DIR = "/home/tim/rpi5-rp1-pio-bench/toggle-frequency/tmp"
+TMP_DIR = "/home/tim/rpi5-rp1-pio-bench/frequency-gpiotoggle/tmp"
 
 # clkdiv values to sweep (highest to lowest frequency)
 CLKDIVS = [256, 128, 64, 32, 16, 8, 4, 2, 1]
@@ -48,7 +48,7 @@ def start_toggle(clkdiv, delay=0, duration_ms=TOGGLE_DURATION_MS):
 
 def stop_toggle():
     """Kill any running toggle process."""
-    ssh_cmd(f"pkill -f toggle_rpi5 || true", timeout=30)
+    ssh_cmd(f"pkill -f frequency_gpiotoggle || true", timeout=30)
 
 
 def run_freq_counter(gate_ms=GATE_MS, count=3):

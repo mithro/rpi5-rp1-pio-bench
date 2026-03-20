@@ -2,7 +2,7 @@
 
 ## PIO Program
 
-The `gpio_loopback` PIO program uses a single state machine to serialise and deserialise data through a physical GPIO pin. It runs at 8 PIO cycles per bit at 200 MHz (5 ns per cycle).
+The `throughput_gpioloop_piolib` PIO program uses a single state machine to serialise and deserialise data through a physical GPIO pin. It runs at 8 PIO cycles per bit at 200 MHz (5 ns per cycle).
 
 ```
 Cycle  Instruction         Purpose

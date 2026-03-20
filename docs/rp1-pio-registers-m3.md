@@ -16,9 +16,9 @@ The RP1 has **two different PIO base addresses** depending on who is accessing:
 - `0xF0000000` is the full PIO register space, accessible only from RP1 M3 cores.
 - `0x40178000` is a FIFO-only window accessible from both M3 and the host (via PCIe).
 - The host (Linux/piolib) cannot access CTRL, FSTAT, SM configuration, or instruction memory directly -- those go through the M3 firmware mailbox protocol.
-- `0xF0000000` is **1.41× faster** than `0x40178000` for register reads from M3 (6.7M vs 4.76M reads/sec). Source: `m3core1/pio_addr_test.s` benchmark.
-- Each PIO register access from M3 takes **~54 cycles (~270 ns at 200 MHz)** via the APB bus bridge — NOT single-cycle. Source: `m3core1/pio_bridge.s` throughput measurements.
-- **FSTAT at `0xF0000000` does NOT dynamically update** when FIFO state changes. Polling RXEMPTY/TXFULL from Core 1 hangs indefinitely. FSTAT only reflects a static snapshot. Source: `m3core1/pio_bridge.s` FSTAT polling test (2026-03-17).
+- `0xF0000000` is **1.41× faster** than `0x40178000` for register reads from M3 (6.7M vs 4.76M reads/sec). Source: `throughput-pioloop-m3poll/test_pio_addr.s` benchmark.
+- Each PIO register access from M3 takes **~54 cycles (~270 ns at 200 MHz)** via the APB bus bridge — NOT single-cycle. Source: `throughput-pioloop-m3poll/pio_bridge.s` throughput measurements.
+- **FSTAT at `0xF0000000` does NOT dynamically update** when FIFO state changes. Polling RXEMPTY/TXFULL from Core 1 hangs indefinitely. FSTAT only reflects a static snapshot. Source: `throughput-pioloop-m3poll/pio_bridge.s` FSTAT polling test (2026-03-17).
 
 ## Complete Register Map at 0xF0000000
 
@@ -167,7 +167,7 @@ pio[TXF0_OFFSET/4] = data;
 uint32_t val = pio[RXF0_OFFSET/4];
 ```
 
-Source: Verified in `m3core1/pio_bridge.s` — FSTAT polling hangs Core 1;
+Source: Verified in `throughput-pioloop-m3poll/pio_bridge.s` — FSTAT polling hangs Core 1;
 direct write-then-read achieves 6.89 MB/s (2026-03-17 benchmark).
 
 ## RP1 vs RP2040 Differences Summary
@@ -188,7 +188,7 @@ direct write-then-read achieves 6.89 MB/s (2026-03-17 benchmark).
 
 ## Host-Configures, Core 1 Accesses FIFOs: The Recommended Pattern
 
-Based on architecture analysis and empirical testing (`m3core1/pio_bridge.s`):
+Based on architecture analysis and empirical testing (`throughput-pioloop-m3poll/pio_bridge.s`):
 
 1. **Host configures PIO via piolib** (ioctls → firmware mailbox → Core 0 firmware writes to `0xF0000000` registers)
    - Load PIO program (instruction memory)
@@ -214,7 +214,7 @@ The `blink_core1.s` example does NOT use PIO -- it directly manipulates GPIO via
 - `0x400E2000` -- GPIO output enable / output value (SYS_RIO block)
 - Initial SP: `0x10003FFC` (PROC-local SRAM, not shared SRAM)
 
-This confirms M3 Core 1 can access peripherals at `0x40xxxxxx` addresses. PIO registers at `0xF0000000` are confirmed accessible from Core 1 (verified by `m3core1/pio_fifo_test.s` and `m3core1/pio_addr_test.s`).
+This confirms M3 Core 1 can access peripherals at `0x40xxxxxx` addresses. PIO registers at `0xF0000000` are confirmed accessible from Core 1 (verified by `throughput-pioloop-m3poll/test_pio_fifo.s` and `throughput-pioloop-m3poll/test_pio_addr.s`).
 
 ## core1_test.c Analysis (MichaelBell)
 

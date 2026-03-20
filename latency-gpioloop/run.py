@@ -6,10 +6,10 @@ tests between an RPi5 (PIO device-under-test) and an RPi4 (external
 stimulus/measurement device) via SSH.
 
 Typical usage:
-    uv run latency/run_latency_benchmark.py
-    uv run latency/run_latency_benchmark.py --tests L0
-    uv run latency/run_latency_benchmark.py --tests L0 L1 L2 L3
-    uv run latency/run_latency_benchmark.py --iterations 5000 --json
+    uv run latency-gpioloop/run.py
+    uv run latency-gpioloop/run.py --tests L0
+    uv run latency-gpioloop/run.py --tests L0 L1 L2 L3
+    uv run latency-gpioloop/run.py --iterations 5000 --json
 """
 
 from __future__ import annotations
@@ -127,8 +127,8 @@ def _ssh_run_ignore_timeout(host: str, cmd: str, timeout: int = 10) -> None:
 def cleanup_pins(rpi5_host: str, rpi4_host: str, input_pin: int, output_pin: int) -> None:
     """Kill leftover processes and restore GPIO pins to safe state."""
     # Kill processes (ignore errors if nothing is running)
-    _ssh_run_ignore_timeout(rpi5_host, "sudo pkill -9 -f latency_rpi5; true")
-    _ssh_run_ignore_timeout(rpi4_host, "pkill -9 -f latency_rpi4; true")
+    _ssh_run_ignore_timeout(rpi5_host, "sudo pkill -9 -f latency_gpioloop; true")
+    _ssh_run_ignore_timeout(rpi4_host, "pkill -9 -f latency_gpioloop_rpi4; true")
     time.sleep(1)
 
     # Restore pins to inputs with pull-downs
@@ -165,7 +165,7 @@ def deploy_and_build(
     log(f"  Building {target} on {label}...")
     r = ssh_run(
         host,
-        f"cd {remote_dir}/latency-gpio && make clean {target}",
+        f"cd {remote_dir}/latency-gpioloop && make clean {target}",
         timeout=60,
     )
     if r.returncode != 0:
@@ -177,8 +177,8 @@ def deploy_and_build(
         return False
 
     # Verify binary exists
-    binary_name = f"latency_{target}"
-    r = ssh_run(host, f"test -x {remote_dir}/latency-gpio/{binary_name}", timeout=10)
+    binary_name = "latency_gpioloop_rpi4" if target == "rpi4" else "latency_gpioloop"
+    r = ssh_run(host, f"test -x {remote_dir}/latency-gpioloop/{binary_name}", timeout=10)
     if r.returncode != 0:
         log(f"  ERROR: Binary {binary_name} not found after build on {label}")
         return False
@@ -199,7 +199,7 @@ def sync_source(
     log(f"  Syncing source to {label}...")
 
     # Sync the latency directory and shared benchmark stats
-    for subdir in ["latency-gpio/", "lib/"]:
+    for subdir in ["latency-gpioloop/", "lib/"]:
         local_path = local_dir / subdir
         if not local_path.exists():
             log(f"  ERROR: Local path {local_path} does not exist")
@@ -209,8 +209,8 @@ def sync_source(
             r = subprocess.run(
                 [
                     "rsync", "-az", "--delete",
-                    "--exclude", "latency_rpi4",
-                    "--exclude", "latency_rpi5",
+                    "--exclude", "latency_gpioloop",
+                    "--exclude", "latency_gpioloop_rpi4",
                     "--exclude", "__pycache__",
                     "--exclude", "*.o",
                     str(local_path),
@@ -258,8 +258,8 @@ def run_test(
     6. Stop the RPi5 program
     7. Clean up
     """
-    rpi5_binary = f"{remote_dir}/latency-gpio/latency_rpi5"
-    rpi4_binary = f"{remote_dir}/latency-gpio/latency_rpi4"
+    rpi5_binary = f"{remote_dir}/latency-gpioloop/latency_gpioloop"
+    rpi4_binary = f"{remote_dir}/latency-gpioloop/latency_gpioloop_rpi4"
 
     result = TestResult(test_mode=test_mode, passed=False, exit_code=1)
 
@@ -358,7 +358,7 @@ def run_test(
 
     # Step 5: Stop RPi5
     log("\n  Stopping RPi5...")
-    ssh_run(rpi5_host, "sudo pkill -SIGINT -f latency_rpi5; true", timeout=10)
+    ssh_run(rpi5_host, "sudo pkill -SIGINT -f latency_gpioloop; true", timeout=10)
     time.sleep(2)
 
     try:
@@ -413,7 +413,7 @@ def run_test_standalone(
     Used for L3 (batched DMA throughput) which uses an internal PIO
     data generator and measures DMA read performance directly.
     """
-    rpi5_binary = f"{remote_dir}/latency-gpio/latency_rpi5"
+    rpi5_binary = f"{remote_dir}/latency-gpioloop/latency_gpioloop"
 
     result = TestResult(test_mode=test_mode, passed=False, exit_code=1)
 

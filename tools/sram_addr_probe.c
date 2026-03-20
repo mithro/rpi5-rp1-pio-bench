@@ -3,7 +3,7 @@
  * This tool probes the kernel module to find which DMA address
  * allows the RP1 DMA controller to access shared SRAM.
  *
- * Sets up PIO loopback via piolib (same as sram_dma_bench), then
+ * Sets up PIO loopback via piolib (same as throughput_pioloop_cyclic), then
  * calls the SRAM_IOC_PROBE_ADDR ioctl for each candidate address.
  *
  * Requires: RPi5, sudo, libpio-dev, rp1_pio_sram.ko loaded

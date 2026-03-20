@@ -7,7 +7,7 @@
 
 import sys, os
 
-log_path = "/home/tim/rpi5-rp1-pio-bench/toggle-frequency/tmp/pre_pack.log"
+log_path = "/home/tim/rpi5-rp1-pio-bench/frequency-gpiotoggle/tmp/pre_pack.log"
 os.makedirs(os.path.dirname(log_path), exist_ok=True)
 
 # Create a rectangular region near I/O pin A5 (tile ~10,9)

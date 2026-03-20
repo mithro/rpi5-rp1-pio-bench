@@ -10,7 +10,7 @@ includes a piolib ioctl baseline for comparison.
 
 A custom kernel module (`kmod/rp1_pio_sram.ko`) sets up cyclic DMA between ring
 buffers and PIO FIFOs using the RP1's dw-axi-dmac controller. The userspace tool
-(`sram_dma_bench`) configures the PIO state machine via piolib, then controls
+(`throughput_pioloop_cyclic`) configures the PIO state machine via piolib, then controls
 DMA through the module's ioctl interface on `/dev/rp1_pio_sram`.
 
 Two buffer modes are supported:

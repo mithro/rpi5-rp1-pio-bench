@@ -1,4 +1,4 @@
-/* latency_rpi4.c — RPi4 GPIO latency measurement program
+/* latency_gpioloop_rpi4.c — RPi4 GPIO latency measurement program
  *
  * Generates stimulus pulses on one GPIO pin and measures round-trip time
  * by busy-polling a response pin. Uses memory-mapped BCM2711 GPIO registers
@@ -10,7 +10,7 @@
  * latency in nanoseconds.
  *
  * Build:  make rpi4   (or see Makefile for manual gcc invocation)
- * Run:    ./latency_rpi4 [options]
+ * Run:    ./latency_gpioloop_rpi4 [options]
  */
 
 #define _GNU_SOURCE

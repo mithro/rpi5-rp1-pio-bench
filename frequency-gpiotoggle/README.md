@@ -21,11 +21,11 @@ The RP1 PIO clock is **200 MHz**. All 9 clock divider settings (1 to 256) measur
 
 | File | Description |
 |------|-------------|
-| `toggle_rpi5.c` | RPi5 PIO toggle generator |
-| `toggle_rpi4.c` | RPi4 GPIO edge counter (cross-validation) |
+| `frequency_gpiotoggle.c` | RPi5 PIO toggle generator |
+| `frequency_gpiotoggle_rpi4.c` | RPi4 GPIO edge counter (cross-validation) |
 | `gpio_toggle.pio` | 2-instruction PIO toggle program |
-| `run_toggle_benchmark.py` | SSH orchestrator (RPi5 + RPi4) |
-| `run_glasgow_freq_sweep.py` | Glasgow frequency counter sweep |
+| `run.py` | SSH orchestrator (RPi5 + RPi4) |
+| `run_glasgow_sweep.py` | Glasgow frequency counter sweep |
 | `glasgow_freq_counter/` | Custom Glasgow FPGA applet (288 MHz PLL + DDR) |
 | `Makefile` | Build system |
 

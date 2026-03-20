@@ -47,7 +47,7 @@
 
 /* Memory addresses */
 /* SRAM layout — buffers must avoid firmware dynamic region (0x9F48-0xA150).
- * See throughput-cyclic-dma/DESIGN.md for full SRAM map. */
+ * See throughput-pioloop-cyclic/DESIGN.md for full SRAM map. */
 .equ STATUS,         0x20008D00
 .equ TX_BUF,         0x2000A200   /* Past firmware dynamic region */
 .equ RX_BUF,         0x2000B200   /* TX + 4KB */

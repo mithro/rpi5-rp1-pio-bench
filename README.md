@@ -16,17 +16,17 @@ All throughput values are in **MB/s (megabytes per second)**, not Mbit/s. Measur
 
 | Approach | TX (MB/s) | RX (MB/s) | Benchmark | Notes |
 |----------|----------:|----------:|-----------|-------|
-| Cyclic DMA, SRAM bidirectional | 54 | 45 | [throughput-cyclic-dma](throughput-cyclic-dma/) `--sram` | SRAM ring buffers at 0xA200+ |
-| RX-only DMA, DRAM | -- | 56 | [throughput-cyclic-dma](throughput-cyclic-dma/) `--rx-only` | Single-direction, kernel module |
-| TX-only DMA, DRAM | 41 | -- | [throughput-cyclic-dma](throughput-cyclic-dma/) `--tx-only` | Single-direction, kernel module |
-| Cyclic DMA, DRAM bidirectional | 40 | 36 | [throughput-cyclic-dma](throughput-cyclic-dma/) `--dram` | Standard DRAM ring buffers |
-| Standard kernel DMA | ~42 | ~42 | [throughput-piolib](throughput-piolib/) | piolib ioctl, concurrent TX+RX via pthreads |
-| piolib ioctl (sequential) | 18 | 18 | [throughput-cyclic-dma](throughput-cyclic-dma/) `--piolib` | Sequential ioctl calls |
-| GPIO serial loopback | ~2 | ~2 | [throughput-gpio-loopback](throughput-gpio-loopback/) | 1-bit serial, 32x DMA expansion |
-| M3 Core 1 CPU-polled | 7 | 7 | [throughput-m3-core1](throughput-m3-core1/) | APB bus bottleneck |
+| Cyclic DMA, SRAM bidirectional | 54 | 45 | [throughput-pioloop-cyclic](throughput-pioloop-cyclic/) `--sram` | SRAM ring buffers at 0xA200+ |
+| RX-only DMA, DRAM | -- | 56 | [throughput-pioloop-cyclic](throughput-pioloop-cyclic/) `--rx-only` | Single-direction, kernel module |
+| TX-only DMA, DRAM | 41 | -- | [throughput-pioloop-cyclic](throughput-pioloop-cyclic/) `--tx-only` | Single-direction, kernel module |
+| Cyclic DMA, DRAM bidirectional | 40 | 36 | [throughput-pioloop-cyclic](throughput-pioloop-cyclic/) `--dram` | Standard DRAM ring buffers |
+| Standard kernel DMA | ~42 | ~42 | [throughput-pioloop-piolib](throughput-pioloop-piolib/) | piolib ioctl, concurrent TX+RX via pthreads |
+| piolib ioctl (sequential) | 18 | 18 | [throughput-pioloop-cyclic](throughput-pioloop-cyclic/) `--piolib` | Sequential ioctl calls |
+| GPIO serial loopback | ~2 | ~2 | [throughput-gpioloop-piolib](throughput-gpioloop-piolib/) | 1-bit serial, 32x DMA expansion |
+| M3 Core 1 CPU-polled | 7 | 7 | [throughput-pioloop-m3poll](throughput-pioloop-m3poll/) | APB bus bottleneck |
 | cleverca22 custom driver (ref) | -- | ~66 | -- | Host-side DMA, [custom driver](https://github.com/cleverca22/libsigrok/commit/e3783bac8176e7454863b37723ab6d8a3f99731a) |
 
-See individual benchmark [Results](throughput-cyclic-dma/RESULTS.md) for full details.
+See individual benchmark [Results](throughput-pioloop-cyclic/RESULTS.md) for full details.
 
 ## Latency Results
 
@@ -39,75 +39,75 @@ Measured over 1000 iterations, 50 warmup, GPIO4/GPIO5 (JC connector), kernel 6.1
 | L2 | PIO + single-word DMA | 52 us | 134x |
 | L3 | Batched 4 KB DMA read | 89 us | 229x |
 
-See [latency-gpio/RESULTS.md](latency-gpio/RESULTS.md) for full statistics (min, P95, P99, max, stddev).
+See [latency-gpioloop/RESULTS.md](latency-gpioloop/RESULTS.md) for full statistics (min, P95, P99, max, stddev).
 
 ## Benchmarks
 
-### [throughput-cyclic-dma](throughput-cyclic-dma/) -- Cyclic DMA Throughput
+### [throughput-pioloop-cyclic](throughput-pioloop-cyclic/) -- Cyclic DMA Throughput
 
 Uses a custom kernel module (`rp1_pio_sram.ko`) to set up cyclic DMA transfers with configurable ring buffer locations (SRAM or DRAM), burst sizes, and period sizes. Supports unidirectional TX-only and RX-only modes.
 
 ```bash
-cd throughput-cyclic-dma && make
+cd throughput-pioloop-cyclic && make
 sudo insmod kmod/rp1_pio_sram.ko
-sudo ./sram_dma_bench --sram
+sudo ./throughput_pioloop_cyclic --sram
 ```
 
-[Results](throughput-cyclic-dma/RESULTS.md) | [Design](throughput-cyclic-dma/DESIGN.md) | [Usage](throughput-cyclic-dma/USAGE.md)
+[Results](throughput-pioloop-cyclic/RESULTS.md) | [Design](throughput-pioloop-cyclic/DESIGN.md) | [Usage](throughput-pioloop-cyclic/USAGE.md)
 
-### [throughput-piolib](throughput-piolib/) -- Standard DMA Throughput
+### [throughput-pioloop-piolib](throughput-pioloop-piolib/) -- Standard DMA Throughput
 
 Measures round-trip DMA throughput using `pio_sm_xfer_data()` (the standard piolib interface). A 3-instruction PIO program performs bitwise NOT in a loop; TX and RX run concurrently in separate pthreads.
 
 ```bash
-cd throughput-piolib && make benchmark
-sudo ./pio_loopback --iterations=20
+cd throughput-pioloop-piolib && make
+sudo ./throughput_pioloop_piolib --iterations=20
 ```
 
-[Results](throughput-piolib/RESULTS.md) | [Design](throughput-piolib/DESIGN.md) | [Usage](throughput-piolib/USAGE.md)
+[Results](throughput-pioloop-piolib/RESULTS.md) | [Design](throughput-pioloop-piolib/DESIGN.md) | [Usage](throughput-pioloop-piolib/USAGE.md)
 
-### [throughput-gpio-loopback](throughput-gpio-loopback/) -- GPIO Loopback Throughput
+### [throughput-gpioloop-piolib](throughput-gpioloop-piolib/) -- GPIO Loopback Throughput
 
 Measures DMA throughput through a 1-bit GPIO serial loopback. PIO serialises each 32-bit word to a single GPIO pin and deserialises on input, creating 32x DMA expansion.
 
 ```bash
-cd throughput-gpio-loopback && make
-sudo ./gpio_loopback
+cd throughput-gpioloop-piolib && make
+sudo ./throughput_gpioloop_piolib
 ```
 
-[Results](throughput-gpio-loopback/RESULTS.md) | [Design](throughput-gpio-loopback/DESIGN.md) | [Usage](throughput-gpio-loopback/USAGE.md)
+[Results](throughput-gpioloop-piolib/RESULTS.md) | [Design](throughput-gpioloop-piolib/DESIGN.md) | [Usage](throughput-gpioloop-piolib/USAGE.md)
 
-### [throughput-m3-core1](throughput-m3-core1/) -- M3 Core 1 PIO Access
+### [throughput-pioloop-m3poll](throughput-pioloop-m3poll/) -- M3 Core 1 PIO Access
 
 Bootstraps the RP1's second ARM Cortex-M3 core via SEV and measures PIO FIFO throughput with direct CPU polling from the M3 side.
 
 ```bash
-cd throughput-m3-core1 && make
-sudo ./m3_bridge_bench
+cd throughput-pioloop-m3poll && make
+sudo ./throughput_pioloop_m3poll
 ```
 
-[Results](throughput-m3-core1/RESULTS.md) | [Design](throughput-m3-core1/DESIGN.md) | [Usage](throughput-m3-core1/USAGE.md)
+[Results](throughput-pioloop-m3poll/RESULTS.md) | [Design](throughput-pioloop-m3poll/DESIGN.md) | [Usage](throughput-pioloop-m3poll/USAGE.md)
 
-### [latency-gpio](latency-gpio/) -- GPIO Latency
+### [latency-gpioloop](latency-gpioloop/) -- GPIO Latency
 
 Coordinates RPi4 (stimulus) and RPi5 (echo) over SSH to measure round-trip GPIO latency at each abstraction layer. Requires two devices connected via GPIO4/GPIO5 (Pmod JC connector).
 
 ```bash
-uv run python latency-gpio/run_latency_benchmark.py --tests L0 L1 L2 L3
+uv run python latency-gpioloop/run.py --tests L0 L1 L2 L3
 ```
 
-[Results](latency-gpio/RESULTS.md) | [Design](latency-gpio/DESIGN.md) | [Usage](latency-gpio/USAGE.md)
+[Results](latency-gpioloop/RESULTS.md) | [Design](latency-gpioloop/DESIGN.md) | [Usage](latency-gpioloop/USAGE.md)
 
-### [toggle-frequency](toggle-frequency/) -- Toggle Frequency
+### [frequency-gpiotoggle](frequency-gpiotoggle/) -- Toggle Frequency
 
 Measures GPIO toggle frequency at various PIO clock dividers, using a Glasgow Interface Explorer as an independent frequency counter.
 
 ```bash
-cd toggle-frequency && make
-uv run python run_toggle_benchmark.py
+cd frequency-gpiotoggle && make
+uv run python run.py
 ```
 
-[Results](toggle-frequency/RESULTS.md) | [Design](toggle-frequency/DESIGN.md) | [Usage](toggle-frequency/USAGE.md)
+[Results](frequency-gpiotoggle/RESULTS.md) | [Design](frequency-gpiotoggle/DESIGN.md) | [Usage](frequency-gpiotoggle/USAGE.md)
 
 ## Hardware Setup
 

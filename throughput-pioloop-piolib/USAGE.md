@@ -12,11 +12,11 @@
 ## Build
 
 ```
-cd throughput-piolib
-make benchmark
+cd throughput-pioloop-piolib
+make
 ```
 
-This produces the `pio_loopback` binary. The Makefile will check for
+This produces the `throughput_pioloop_piolib` binary. The Makefile will check for
 `libpio-dev` and `/dev/pio0` automatically.
 
 Other build targets:
@@ -25,16 +25,16 @@ Other build targets:
 |-----------------|----------------------------------------------------|
 | `make test`     | Build portable test binary (no hardware required)  |
 | `make run-test` | Build and run the portable test                    |
-| `make benchmark`| Build the RPi5 benchmark binary                    |
+| `make`          | Build the RPi5 benchmark binary                    |
 | `make check-deps`| Verify RPi5 build dependencies are present        |
 | `make install-deps`| Install RPi5 dependencies (requires sudo)       |
-| `make pioasm`   | Regenerate `loopback.pio.h` from `loopback.pio`   |
+| `make pioasm`   | Regenerate `pio_loopback.pio.h` from `pio_loopback.pio` |
 | `make clean`    | Remove build artifacts                             |
 
 ## Run
 
 ```
-sudo ./pio_loopback
+sudo ./throughput_pioloop_piolib
 ```
 
 Root access is required for `/dev/pio0` access.
@@ -60,31 +60,31 @@ Root access is required for `/dev/pio0` access.
 Run with defaults (256 KB, 100 iterations, DMA mode):
 
 ```
-sudo ./pio_loopback
+sudo ./throughput_pioloop_piolib
 ```
 
 Smaller transfer size with JSON output:
 
 ```
-sudo ./pio_loopback --size=65536 --iterations=50 --json
+sudo ./throughput_pioloop_piolib --size=65536 --iterations=50 --json
 ```
 
 Run without data verification:
 
 ```
-sudo ./pio_loopback --no-verify
+sudo ./throughput_pioloop_piolib --no-verify
 ```
 
 Use random test pattern with custom DMA settings:
 
 ```
-sudo ./pio_loopback --pattern=3 --dma-threshold=4 --dma-priority=0
+sudo ./throughput_pioloop_piolib --pattern=3 --dma-threshold=4 --dma-priority=0
 ```
 
 Blocking mode (slow, for comparison):
 
 ```
-sudo ./pio_loopback --mode=blocking --size=4096 --iterations=10
+sudo ./throughput_pioloop_piolib --mode=blocking --size=4096 --iterations=10
 ```
 
 ## Interpreting results

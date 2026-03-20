@@ -12,7 +12,7 @@
 Build the userspace benchmark tool:
 
 ```sh
-make sram_dma_bench
+make throughput_pioloop_cyclic
 ```
 
 Build the kernel module:
@@ -39,23 +39,23 @@ This creates `/dev/rp1_pio_sram` for userspace mmap and ioctl access.
 
 ```sh
 # SRAM ring buffers (RP1-internal, highest throughput)
-sudo ./sram_dma_bench --sram
+sudo ./throughput_pioloop_cyclic --sram
 
 # DRAM ring buffers (host memory via PCIe)
-sudo ./sram_dma_bench --dram
+sudo ./throughput_pioloop_cyclic --dram
 
 # Unidirectional modes
-sudo ./sram_dma_bench --rx-only
-sudo ./sram_dma_bench --tx-only
+sudo ./throughput_pioloop_cyclic --rx-only
+sudo ./throughput_pioloop_cyclic --tx-only
 
 # piolib ioctl baseline
-sudo ./sram_dma_bench --piolib
+sudo ./throughput_pioloop_cyclic --piolib
 
 # JSON output
-sudo ./sram_dma_bench --dram --json
+sudo ./throughput_pioloop_cyclic --dram --json
 
 # Custom duration (seconds)
-sudo ./sram_dma_bench --dram --duration=5
+sudo ./throughput_pioloop_cyclic --dram --duration=5
 ```
 
 ## Automated Testing

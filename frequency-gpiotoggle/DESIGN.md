@@ -40,10 +40,10 @@ The 288 MHz PLL exceeds the iCE40 timing model (~194 MHz max) but works reliably
 
 ## Clock Divider Sweep Methodology
 
-`run_glasgow_freq_sweep.py` automates the measurement:
+`run_glasgow_sweep.py` automates the measurement:
 
 1. For each clkdiv value (1, 2, 4, 8, 16, 32, 64, 128, 256):
-   - Start `toggle_rpi5` on RPi5 via SSH with the given clkdiv and GPIO5
+   - Start `frequency_gpiotoggle` on RPi5 via SSH with the given clkdiv and GPIO5
    - Run Glasgow frequency counter applet with 1-second gate time
    - Take 3 measurements per setting
    - Record measured frequency and compute accuracy against 200 MHz prediction
@@ -52,7 +52,7 @@ The 288 MHz PLL exceeds the iCE40 timing model (~194 MHz max) but works reliably
 
 ## RPi4 Edge Counter (Cross-Validation)
 
-`toggle_rpi4.c` provides an independent measurement using mmap GPIO polling:
+`frequency_gpiotoggle_rpi4.c` provides an independent measurement using mmap GPIO polling:
 
 - Memory-maps BCM2711 GPIO registers via `/dev/gpiomem`
 - Counts edges on the input pin by polling `GPLEV0` in a tight loop
@@ -60,7 +60,7 @@ The 288 MHz PLL exceeds the iCE40 timing model (~194 MHz max) but works reliably
 - Accurate for frequencies up to ~3.1 MHz (Nyquist ~7.35 MHz)
 - Above ~7.35 MHz, edge counting aliases and underreports
 
-`run_toggle_benchmark.py` coordinates RPi5 (toggle generator) and RPi4 (edge counter) via SSH for automated sweeps.
+`run.py` coordinates RPi5 (toggle generator) and RPi4 (edge counter) via SSH for automated sweeps.
 
 ## Instrument Comparison
 

@@ -20,8 +20,8 @@
  * Hardware: GPIO5 (output) looped back to GPIO5 or GPIO4 (input)
  * Theoretical throughput: 200 MHz / 8 / 32 = 3.125 MB/s source data
  *
- * Build: make benchmark  (on RPi5)
- * Run:   sudo ./gpio_loopback [options]
+ * Build: make  (on RPi5)
+ * Run:   sudo ./throughput_gpioloop_piolib [options]
  */
 
 #define _GNU_SOURCE

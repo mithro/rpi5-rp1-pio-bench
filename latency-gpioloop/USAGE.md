@@ -23,17 +23,17 @@ The orchestrator handles source sync, building, test coordination, and result co
 
 ```sh
 # Run all test layers (L0, L1, L2, L3)
-uv run latency-gpio/run_latency_benchmark.py
+uv run latency-gpioloop/run.py
 
 # Run specific layers
-uv run latency-gpio/run_latency_benchmark.py --tests L0
-uv run latency-gpio/run_latency_benchmark.py --tests L0 L1 L2 L3
+uv run latency-gpioloop/run.py --tests L0
+uv run latency-gpioloop/run.py --tests L0 L1 L2 L3
 
 # Custom iteration count with JSON output
-uv run latency-gpio/run_latency_benchmark.py --iterations 5000 --json
+uv run latency-gpioloop/run.py --iterations 5000 --json
 
 # Skip build (use existing binaries)
-uv run latency-gpio/run_latency_benchmark.py --no-build --no-sync
+uv run latency-gpioloop/run.py --no-build --no-sync
 ```
 
 ### Orchestrator Options
@@ -61,25 +61,25 @@ uv run latency-gpio/run_latency_benchmark.py --no-build --no-sync
 ### On RPi5
 
 ```sh
-cd latency-gpio
-make rpi5
-sudo ./latency_rpi5 --test=L0 --input-pin=4 --output-pin=5
+cd latency-gpioloop
+make
+sudo ./latency_gpioloop --test=L0 --input-pin=4 --output-pin=5
 ```
 
 ### On RPi4
 
 ```sh
-cd latency-gpio
+cd latency-gpioloop
 make rpi4
-./latency_rpi4 --stimulus-pin=4 --response-pin=5 --iterations=1000 --warmup=50 --json
+./latency_gpioloop_rpi4 --stimulus-pin=4 --response-pin=5 --iterations=1000 --warmup=50 --json
 ```
 
 ### Build Options
 
 ```sh
 make rpi4          # Build RPi4 measurement binary
-make rpi5          # Build RPi5 PIO latency binary
+make               # Build RPi5 PIO latency binary (default target)
 make pioasm        # Regenerate .pio.h headers
 make clean         # Remove build artifacts
-FORCE_BUILD=1 make rpi5   # Force build on non-RPi5 host
+FORCE_BUILD=1 make # Force build on non-RPi5 host
 ```

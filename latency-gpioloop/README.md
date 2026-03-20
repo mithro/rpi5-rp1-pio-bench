@@ -26,13 +26,13 @@ L0 represents the hardware baseline. L1 is 113x slower due to ioctl round-trip o
 
 | File | Description |
 |------|-------------|
-| `latency_rpi5.c` | RPi5 PIO echo program (all layers) |
-| `latency_rpi4.c` | RPi4 stimulus/measurement program |
-| `run_latency_benchmark.py` | Python SSH orchestrator |
+| `latency_gpioloop.c` | RPi5 PIO echo program (all layers) |
+| `latency_gpioloop_rpi4.c` | RPi4 stimulus/measurement program |
+| `run.py` | Python SSH orchestrator |
 | `gpio_echo.pio` | L0 PIO program: 4-instruction echo |
 | `edge_detector.pio` | L1/L2 PIO program: edge detection with FIFO |
 | `output_driver.pio` | L1/L2 PIO program: output from FIFO |
-| `latency_common.h` | Shared constants and structures |
+| `common.h` | Shared constants and structures |
 | `Makefile` | Build system (rpi4 and rpi5 targets) |
 
 ## See Also

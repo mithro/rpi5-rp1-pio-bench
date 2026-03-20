@@ -1,4 +1,4 @@
-# throughput-piolib -- RP1 PIO DMA Throughput Benchmark
+# throughput-pioloop-piolib -- RP1 PIO DMA Throughput Benchmark
 
 Measures DMA throughput through the RPi5 RP1 PIO block using the standard
 piolib ioctl API (`pio_sm_xfer_data`). A 3-instruction PIO program loops

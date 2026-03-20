@@ -1,4 +1,4 @@
-/* sram_dma_bench.c — Cyclic DMA PIO Loopback Benchmark
+/* throughput_pioloop_cyclic.c — Cyclic DMA PIO Loopback Benchmark
  *
  * Sets up PIO loopback via piolib, then uses the rp1_pio_sram kernel module
  * to run cyclic DMA between host DRAM ring buffers and PIO FIFOs. Measures
@@ -10,9 +10,9 @@
  *
  * Requires: RPi5, sudo, libpio-dev, rp1_pio_sram.ko loaded
  *
- * Build: gcc -Wall -Wextra -O2 -o sram_dma_bench sram_dma_bench.c \
+ * Build: gcc -Wall -Wextra -O2 -o throughput_pioloop_cyclic throughput_pioloop_cyclic.c \
  *        -I/usr/include/piolib -lpio -lm
- * Run:   sudo ./sram_dma_bench
+ * Run:   sudo ./throughput_pioloop_cyclic
  */
 
 #define _GNU_SOURCE
@@ -724,7 +724,7 @@ int main(int argc, char *argv[])
 	const char *mode_str = use_piolib ? "piolib (standard ioctl DMA)" :
 			       use_sram  ? "SRAM (RP1-internal)" :
 					   "DRAM (host, via PCIe)";
-	printf("sram_dma_bench — Cyclic DMA PIO Loopback Benchmark\n");
+	printf("throughput_pioloop_cyclic — Cyclic DMA PIO Loopback Benchmark\n");
 	printf("===================================================\n");
 	printf("Mode: %s%s\n\n", mode_str, dir_str);
 

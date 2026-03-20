@@ -14,18 +14,18 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build test binary
-        working-directory: throughput-piolib
+        working-directory: throughput-pioloop-piolib
         run: make test
 
       - name: Run tests
-        working-directory: throughput-piolib
+        working-directory: throughput-pioloop-piolib
         run: make run-test
 
       - name: Upload test binary
         uses: actions/upload-artifact@v4
         with:
-          name: benchmark_test-x86_64
-          path: throughput-piolib/benchmark_test
+          name: test_stats-x86_64
+          path: throughput-pioloop-piolib/test_stats
 
   test-arm:
     name: Test (aarch64)
@@ -34,18 +34,18 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build test binary
-        working-directory: throughput-piolib
+        working-directory: throughput-pioloop-piolib
         run: make test
 
       - name: Run tests
-        working-directory: throughput-piolib
+        working-directory: throughput-pioloop-piolib
         run: make run-test
 
       - name: Upload test binary
         uses: actions/upload-artifact@v4
         with:
-          name: benchmark_test-aarch64
-          path: throughput-piolib/benchmark_test
+          name: test_stats-aarch64
+          path: throughput-pioloop-piolib/test_stats
 
   build-benchmarks:
     name: Build benchmarks (aarch64)
@@ -63,49 +63,49 @@ jobs:
       - name: Install libpio-dev and RPi kernel headers
         run: sudo apt-get install -y libpio-dev linux-libc-dev
 
-      - name: Build throughput-piolib
-        working-directory: throughput-piolib
-        run: make benchmark FORCE_BUILD=1
-
-      - name: Build throughput-cyclic-dma
-        working-directory: throughput-cyclic-dma
-        run: make sram_dma_bench FORCE_BUILD=1
-
-      - name: Build throughput-gpio-loopback
-        working-directory: throughput-gpio-loopback
+      - name: Build throughput-pioloop-piolib
+        working-directory: throughput-pioloop-piolib
         run: make FORCE_BUILD=1
 
-      - name: Build latency-gpio (RPi5)
-        working-directory: latency-gpio
-        run: make rpi5 FORCE_BUILD=1
+      - name: Build throughput-pioloop-cyclic
+        working-directory: throughput-pioloop-cyclic
+        run: make FORCE_BUILD=1
 
-      - name: Build latency-gpio (RPi4)
-        working-directory: latency-gpio
+      - name: Build throughput-gpioloop-piolib
+        working-directory: throughput-gpioloop-piolib
+        run: make FORCE_BUILD=1
+
+      - name: Build latency-gpioloop (RPi5)
+        working-directory: latency-gpioloop
+        run: make FORCE_BUILD=1
+
+      - name: Build latency-gpioloop (RPi4)
+        working-directory: latency-gpioloop
         run: make rpi4 FORCE_BUILD=1
 
-      - name: Build toggle-frequency (RPi5)
-        working-directory: toggle-frequency
-        run: make rpi5 FORCE_BUILD=1
+      - name: Build frequency-gpiotoggle (RPi5)
+        working-directory: frequency-gpiotoggle
+        run: make FORCE_BUILD=1
 
-      - name: Build throughput-m3-core1 host tools
-        working-directory: throughput-m3-core1
+      - name: Build throughput-pioloop-m3poll host tools
+        working-directory: throughput-pioloop-m3poll
         run: |
           gcc -Wall -Wextra -Werror -O2 -std=c11 -o core1_launcher core1_launcher.c -lm
-          gcc -Wall -Wextra -Werror -O2 -std=c11 -I/usr/include/piolib -o m3_bridge_bench m3_bridge_bench.c -lm -lpio
+          gcc -Wall -Wextra -Werror -O2 -std=c11 -I/usr/include/piolib -o throughput_pioloop_m3poll throughput_pioloop_m3poll.c -lm -lpio
 
       - name: Upload binaries
         uses: actions/upload-artifact@v4
         with:
           name: benchmarks-aarch64
           path: |
-            throughput-piolib/pio_loopback
-            throughput-cyclic-dma/sram_dma_bench
-            throughput-gpio-loopback/gpio_loopback
-            latency-gpio/latency_rpi5
-            latency-gpio/latency_rpi4
-            toggle-frequency/toggle_rpi5
-            throughput-m3-core1/core1_launcher
-            throughput-m3-core1/m3_bridge_bench
+            throughput-pioloop-piolib/throughput_pioloop_piolib
+            throughput-pioloop-cyclic/throughput_pioloop_cyclic
+            throughput-gpioloop-piolib/throughput_gpioloop_piolib
+            latency-gpioloop/latency_gpioloop
+            latency-gpioloop/latency_gpioloop_rpi4
+            frequency-gpiotoggle/frequency_gpiotoggle
+            throughput-pioloop-m3poll/core1_launcher
+            throughput-pioloop-m3poll/throughput_pioloop_m3poll
 
   build-m3-firmware:
     name: Build M3 Core 1 firmware
@@ -117,11 +117,11 @@ jobs:
         run: sudo apt-get install -y gcc-arm-none-eabi
 
       - name: Build M3 firmware binaries
-        working-directory: throughput-m3-core1
+        working-directory: throughput-pioloop-m3poll
         run: make firmware
 
       - name: Upload firmware binaries
         uses: actions/upload-artifact@v4
         with:
           name: m3-firmware-aarch64
-          path: throughput-m3-core1/*.bin
+          path: throughput-pioloop-m3poll/*.bin

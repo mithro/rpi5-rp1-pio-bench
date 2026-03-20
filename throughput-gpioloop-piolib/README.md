@@ -21,7 +21,7 @@ A single PIO state machine serialises each 32-bit source word to a 1-bit GPIO ou
 
 | File | Description |
 |------|-------------|
-| `gpio_loopback.c` | Benchmark program (RPi5, requires libpio-dev) |
+| `throughput_gpioloop_piolib.c` | Benchmark program (RPi5, requires libpio-dev) |
 | `gpio_loopback.pio` | PIO program: 8-cycle bit-serial loopback |
 | `Makefile` | Build system |
 | `dma-word-rate-theory.md` | DMA/PIO interaction analysis and threshold tuning |

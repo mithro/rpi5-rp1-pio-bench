@@ -21,14 +21,14 @@
 ### On RPi5
 
 ```sh
-cd toggle-frequency
-make rpi5
+cd frequency-gpiotoggle
+make
 ```
 
 ### On RPi4 (optional, for edge counter cross-validation)
 
 ```sh
-cd toggle-frequency
+cd frequency-gpiotoggle
 make rpi4
 ```
 
@@ -37,7 +37,7 @@ make rpi4
 ```sh
 make pioasm        # Regenerate gpio_toggle.pio.h
 make clean         # Remove build artifacts
-FORCE_BUILD=1 make rpi5   # Force build on non-RPi5 host
+FORCE_BUILD=1 make        # Force build on non-RPi5 host
 ```
 
 ## Running the Toggle Generator
@@ -45,7 +45,7 @@ FORCE_BUILD=1 make rpi5   # Force build on non-RPi5 host
 On the RPi5:
 
 ```sh
-sudo ./toggle_rpi5 --pin=5 --clkdiv=1 --duration-ms=5000
+sudo ./frequency_gpiotoggle --pin=5 --clkdiv=1 --duration-ms=5000
 ```
 
 This toggles GPIO5 at 100 MHz (clkdiv=1) for 5 seconds.
@@ -55,13 +55,13 @@ This toggles GPIO5 at 100 MHz (clkdiv=1) for 5 seconds.
 From the development machine:
 
 ```sh
-uv run toggle-frequency/run_glasgow_freq_sweep.py
+uv run frequency-gpiotoggle/run_glasgow_sweep.py
 ```
 
 This sweeps clkdiv values 1 through 256, measuring the toggle frequency at each setting with the Glasgow PLL+DDR frequency counter. Each measurement uses a 1-second gate time with 3 repeats per setting.
 
 Requirements:
-- `toggle_rpi5` built on RPi5
+- `frequency_gpiotoggle` built on RPi5
 - Glasgow connected to GPIO5 on RPi5 header (pin A7)
 - SSH access to RPi5
 
@@ -70,13 +70,13 @@ Requirements:
 From the development machine:
 
 ```sh
-uv run toggle-frequency/run_toggle_benchmark.py
+uv run frequency-gpiotoggle/run.py
 ```
 
 This coordinates RPi5 (toggle generator) and RPi4 (edge counter) via SSH. Accurate only for clkdiv >= 32 (frequencies up to ~3.1 MHz) due to RPi4 GPIO polling rate limits.
 
 Requirements:
-- `toggle_rpi5` built on RPi5
-- `toggle_rpi4` built on RPi4
+- `frequency_gpiotoggle` built on RPi5
+- `frequency_gpiotoggle_rpi4` built on RPi4
 - GPIO5 on RPi5 connected to GPIO4 on RPi4
 - SSH access to both RPis

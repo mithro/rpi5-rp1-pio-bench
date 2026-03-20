@@ -321,17 +321,17 @@ management processors" likely refers to PIO state machine instruction execution
 
 ## 10. Final Throughput Comparison
 
-All measurements verified on fresh boot (2026-03-17). Sources in `throughput-cyclic-dma/DESIGN.md`.
+All measurements verified on fresh boot (2026-03-17). Sources in `throughput-pioloop-cyclic/DESIGN.md`.
 
 | Approach | Throughput | Method | Source |
 |----------|-----------|--------|--------|
-| RX-only DMA, DRAM | **55.97 MB/s** | Unidirectional cyclic DMA | `sram_dma_bench --rx-only` |
-| Cyclic DMA, SRAM bidir | **54.13 / 45.10 MB/s** | SRAM rings at 0xA200+ | `sram_dma_bench --sram` |
-| Cyclic DMA, DRAM bidir | 40.35 / 35.87 MB/s | Host DRAM rings via PCIe | `sram_dma_bench --dram` |
-| TX-only DMA, DRAM | 40.93 MB/s | Unidirectional cyclic DMA | `sram_dma_bench --tx-only` |
+| RX-only DMA, DRAM | **55.97 MB/s** | Unidirectional cyclic DMA | `throughput_pioloop_cyclic --rx-only` |
+| Cyclic DMA, SRAM bidir | **54.13 / 45.10 MB/s** | SRAM rings at 0xA200+ | `throughput_pioloop_cyclic --sram` |
+| Cyclic DMA, DRAM bidir | 40.35 / 35.87 MB/s | Host DRAM rings via PCIe | `throughput_pioloop_cyclic --dram` |
+| TX-only DMA, DRAM | 40.93 MB/s | Unidirectional cyclic DMA | `throughput_pioloop_cyclic --tx-only` |
 | Standard kernel DMA | ~42 MB/s | piolib ioctl path | Baseline (pelwell) |
-| piolib ioctl DMA | 17.51 MB/s | Per-transfer ioctl overhead | `sram_dma_bench --piolib` |
-| M3 Core 1 CPU polling | **6.89 MB/s** | LDR/STR from 0xF0000000 | `m3_bridge_bench` |
+| piolib ioctl DMA | 17.51 MB/s | Per-transfer ioctl overhead | `throughput_pioloop_cyclic --piolib` |
+| M3 Core 1 CPU polling | **6.89 MB/s** | LDR/STR from 0xF0000000 | `throughput_pioloop_m3poll` |
 | cleverca22 custom driver | ~66 MB/s | Host DMA, direct register | [libsigrok commit](https://github.com/cleverca22/libsigrok/commit/e3783bac8176e7454863b37723ab6d8a3f99731a) |
 
 ---

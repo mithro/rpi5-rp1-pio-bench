@@ -1,5 +1,5 @@
 #!/bin/bash
-# run_tests.sh — Automated end-to-end test for sram_dma_bench
+# run_tests.sh — Automated end-to-end test for throughput_pioloop_cyclic
 #
 # Runs DRAM DMA benchmark multiple times, collects JSON results,
 # and reports summary statistics.
@@ -13,7 +13,7 @@ ITERATIONS=10
 DURATION=1
 JSON_SUMMARY=0
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-BENCH="$SCRIPT_DIR/sram_dma_bench"
+BENCH="$SCRIPT_DIR/throughput_pioloop_cyclic"
 
 for arg in "$@"; do
     case "$arg" in

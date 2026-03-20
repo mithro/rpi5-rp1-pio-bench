@@ -2,7 +2,7 @@
 
 ## PIO program
 
-The PIO state machine runs a 3-instruction program (`loopback.pio`) that
+The PIO state machine runs a 3-instruction program (`pio_loopback.pio`) that
 performs an internal loopback with a bitwise NOT transform:
 
 ```
@@ -77,13 +77,13 @@ throughput without the comparison overhead.
 
 | File                  | Description                                      |
 |-----------------------|--------------------------------------------------|
-| `benchmark_main.c`    | Entry point, PIO setup, DMA transfer loop        |
+| `throughput_pioloop_piolib.c` | Entry point, PIO setup, DMA transfer loop   |
 | `benchmark_verify.c`  | Test pattern generation and NOT verification     |
 | `benchmark_verify.h`  | Public API for pattern fill and verify functions  |
 | `benchmark_stats.c`   | Statistics: mean, median, stddev, percentiles     |
 | `benchmark_stats.h`   | Report struct and stats API                       |
 | `benchmark_format.c`  | Human-readable and JSON output formatting         |
 | `benchmark_format.h`  | Formatter API                                     |
-| `loopback.pio`        | PIO assembly source (3-instruction NOT loopback)  |
-| `loopback.pio.h`      | Generated C header from pioasm                    |
+| `pio_loopback.pio`    | PIO assembly source (3-instruction NOT loopback)  |
+| `pio_loopback.pio.h`  | Generated C header from pioasm                    |
 | `Makefile`            | Build system (benchmark + portable test targets)  |
