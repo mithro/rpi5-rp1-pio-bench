@@ -33,6 +33,9 @@
 #include "piolib.h"
 #include "../lib/pio_loopback.pio.h"
 
+#include "benchmark_cli.h"
+#include "benchmark_format.h"
+
 /* ─── Unidirectional PIO programs ──────────────────────────────── */
 
 /* RX-only: generates data by shifting 32 null bits into ISR with autopush.
@@ -687,33 +690,61 @@ static int test_piolib_baseline(double duration_sec)
 
 /* ─── Main ────────────────────────────────────────────────────── */
 
+static void print_usage(const char *prog)
+{
+	fprintf(stderr,
+		"Usage: %s [options]\n"
+		"\n"
+		"Cyclic DMA PIO loopback throughput benchmark.\n"
+		"\n"
+		"Benchmark-specific options:\n"
+		"  --sram           Use SRAM ring buffers (RP1-internal)\n"
+		"  --dram           Use DRAM ring buffers (host, via PCIe) [default]\n"
+		"  --piolib         Use piolib ioctl DMA baseline\n"
+		"  --tx-only        TX-only unidirectional DMA\n"
+		"  --rx-only        RX-only unidirectional DMA\n"
+		"  --diag           Run DMA diagnostic only\n",
+		prog);
+	benchmark_cli_print_common_help();
+}
+
 int main(int argc, char *argv[])
 {
-	double duration = 2.0;
+	/* Parse common flags first */
+	benchmark_config_t cfg = benchmark_cli_parse(argc, argv);
+
+	double duration = cfg.duration_sec > 0.0 ? cfg.duration_sec : 2.0;
 	int use_sram = 0;
 	int use_piolib = 0;
-
 	int diag_only = 0;
+	json_mode = cfg.json_output;
 
-	for (int i = 1; i < argc; i++) {
-		if (strcmp(argv[i], "--sram") == 0)
+	/* Parse benchmark-specific flags from remaining args */
+	for (int i = 1; i < cfg.argc_remaining; i++) {
+		if (strcmp(cfg.argv_remaining[i], "--sram") == 0)
 			use_sram = 1;
-		else if (strcmp(argv[i], "--dram") == 0)
+		else if (strcmp(cfg.argv_remaining[i], "--dram") == 0)
 			use_sram = 0;
-		else if (strcmp(argv[i], "--piolib") == 0)
+		else if (strcmp(cfg.argv_remaining[i], "--piolib") == 0)
 			use_piolib = 1;
-		else if (strcmp(argv[i], "--diag") == 0)
+		else if (strcmp(cfg.argv_remaining[i], "--diag") == 0)
 			diag_only = 1;
-		else if (strcmp(argv[i], "--tx-only") == 0)
+		else if (strcmp(cfg.argv_remaining[i], "--tx-only") == 0)
 			dma_dir = DMA_DIR_TX_ONLY;
-		else if (strcmp(argv[i], "--rx-only") == 0)
+		else if (strcmp(cfg.argv_remaining[i], "--rx-only") == 0)
 			dma_dir = DMA_DIR_RX_ONLY;
-		else if (strcmp(argv[i], "--json") == 0)
-			json_mode = 1;
-		else if (strncmp(argv[i], "--duration=", 11) == 0)
-			duration = atof(argv[i] + 11);
-		else if (argv[i][0] != '-')
-			duration = atof(argv[i]);
+		else {
+			fprintf(stderr, "Unknown option: %s\n", cfg.argv_remaining[i]);
+			print_usage(argv[0]);
+			free(cfg.argv_remaining);
+			return 1;
+		}
+	}
+
+	if (cfg.help_requested) {
+		print_usage(argv[0]);
+		free(cfg.argv_remaining);
+		return 0;
 	}
 
 	setbuf(stdout, NULL);
@@ -783,25 +814,29 @@ int main(int argc, char *argv[])
 		pio_teardown();
 	}
 
-	if (json_mode && !diag_only) {
-		printf("{\"mode\":\"%s\",\"result\":\"%s\","
-		       "\"duration\":%.3f,"
-		       "\"tx_bytes\":%lu,\"rx_bytes\":%lu,"
-		       "\"tx_mbps\":%.2f,\"rx_mbps\":%.2f,"
-		       "\"verify_pass\":%s,"
-		       "\"verify_errors\":%u,\"verify_total\":%u,"
-		       "\"periods_clean\":%u,\"periods_torn\":%u,"
-		       "\"periods_bad\":%u,\"periods_empty\":%u}\n",
-		       results.mode ? results.mode : "unknown",
-		       ret == 0 ? "PASS" : "FAIL",
-		       results.duration,
-		       (unsigned long)results.tx_bytes,
-		       (unsigned long)results.rx_bytes,
-		       results.tx_mbps, results.rx_mbps,
-		       results.verify_pass ? "true" : "false",
-		       results.verify_errors, results.verify_total,
-		       results.periods_clean, results.periods_torn,
-		       results.periods_bad, results.periods_empty);
+	if (!diag_only) {
+		char dur_buf[32], mode_buf[64];
+		snprintf(dur_buf, sizeof(dur_buf), "%.1f s", duration);
+		snprintf(mode_buf, sizeof(mode_buf), "%s%s", mode_str, dir_str);
+
+		benchmark_kv_t kvs[] = {
+			{"mode",     mode_buf},
+			{"duration", dur_buf},
+		};
+
+		benchmark_result_t res = {
+			.type = BENCH_TYPE_THROUGHPUT,
+			.benchmark_name = "throughput-pioloop-cyclic",
+			.iterations_completed = 1,
+			.data_errors = (int)results.verify_errors,
+			.pass = (ret == 0),
+			.throughput = {
+				.tx_mbps = results.tx_mbps,
+				.rx_mbps = results.rx_mbps,
+			},
+		};
+
+		benchmark_output(&cfg, &res, kvs, sizeof(kvs) / sizeof(kvs[0]));
 	} else {
 		printf("===================================================\n");
 		if (ret == 0)
@@ -810,5 +845,6 @@ int main(int argc, char *argv[])
 			printf("RESULT: FAIL\n");
 	}
 
+	free(cfg.argv_remaining);
 	return ret;
 }
