@@ -23,6 +23,7 @@
 #include "piolib.h"
 #include "pio_loopback.pio.h"
 
+#include "benchmark_cli.h"
 #include "benchmark_format.h"
 #include "benchmark_stats.h"
 #include "benchmark_verify.h"
@@ -123,26 +124,20 @@ static void print_usage(const char *prog)
     fprintf(stderr,
         "Usage: %s [options]\n"
         "\n"
-        "Options:\n"
+        "Benchmark-specific options:\n"
         "  --size=BYTES       Transfer size per iteration (default %d)\n"
-        "  --iterations=N     Number of measured iterations (default %d)\n"
-        "  --warmup=N         Warmup iterations (default %d)\n"
         "  --pattern=ID       Test pattern: 0=seq, 1=ones, 2=alt, 3=random (default %d)\n"
         "  --threshold=MB/S   Pass/fail threshold (default %.1f)\n"
-        "  --json             Output JSON instead of human-readable table\n"
-        "  --no-verify        Skip data verification (measure raw throughput)\n"
         "  --mode=MODE        Transfer mode: dma or blocking (default dma)\n"
         "  --dma-threshold=N  FIFO threshold 1-8, DMA mode only (default %d)\n"
-        "  --dma-priority=N   DMA priority 0-31, DMA mode only (default %d)\n"
-        "  --help             Show this help\n",
+        "  --dma-priority=N   DMA priority 0-31, DMA mode only (default %d)\n",
         prog,
         DEFAULT_TRANSFER_SIZE,
-        DEFAULT_ITERATIONS,
-        DEFAULT_WARMUP,
         DEFAULT_PATTERN,
         DEFAULT_THRESHOLD_MBPS,
         DEFAULT_DMA_THRESHOLD,
         DEFAULT_DMA_PRIORITY);
+    benchmark_cli_print_common_help();
 }
 
 /* ─── Main ──────────────────────────────────────────────────── */
@@ -151,44 +146,40 @@ int main(int argc, char **argv)
 {
     int ret = 0;
 
-    /* Default parameters. */
+    /* Parse common CLI flags (--json, --iterations, --warmup, --no-verify, --help). */
+    benchmark_config_t cfg = benchmark_cli_parse(argc, argv);
+
+    /* Default parameters (benchmark-specific). */
     size_t transfer_size = DEFAULT_TRANSFER_SIZE;
-    int iterations = DEFAULT_ITERATIONS;
-    int warmup = DEFAULT_WARMUP;
+    int iterations = cfg.iterations;
+    int warmup = cfg.warmup;
     int pattern = DEFAULT_PATTERN;
     double threshold = DEFAULT_THRESHOLD_MBPS;
-    int json_output = 0;
-    int no_verify = 0;
+    int json_output = cfg.json_output;
+    int no_verify = cfg.no_verify;
     bench_mode_t mode = BENCH_MODE_DMA;
     int dma_threshold = DEFAULT_DMA_THRESHOLD;
     int dma_priority = DEFAULT_DMA_PRIORITY;
 
-    /* Parse command-line options. */
+    /* Parse benchmark-specific options from remaining args. */
     static struct option long_options[] = {
         {"size",          required_argument, NULL, 's'},
-        {"iterations",    required_argument, NULL, 'i'},
-        {"warmup",        required_argument, NULL, 'w'},
         {"pattern",       required_argument, NULL, 'p'},
         {"threshold",     required_argument, NULL, 't'},
-        {"json",          no_argument,       NULL, 'j'},
-        {"no-verify",     no_argument,       NULL, 'n'},
         {"mode",          required_argument, NULL, 'm'},
         {"dma-threshold", required_argument, NULL, 'T'},
         {"dma-priority",  required_argument, NULL, 'P'},
-        {"help",          no_argument,       NULL, 'h'},
         {NULL, 0, NULL, 0}
     };
 
+    optind = 1; /* reset getopt for second pass */
     int opt;
-    while ((opt = getopt_long(argc, argv, "s:i:w:p:t:jnm:T:P:h", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(cfg.argc_remaining, cfg.argv_remaining,
+                               "s:p:t:m:T:P:", long_options, NULL)) != -1) {
         switch (opt) {
         case 's': transfer_size = (size_t)atol(optarg); break;
-        case 'i': iterations = atoi(optarg); break;
-        case 'w': warmup = atoi(optarg); break;
         case 'p': pattern = atoi(optarg); break;
         case 't': threshold = atof(optarg); break;
-        case 'j': json_output = 1; break;
-        case 'n': no_verify = 1; break;
         case 'm':
             if (strcmp(optarg, "dma") == 0)
                 mode = BENCH_MODE_DMA;
@@ -197,16 +188,23 @@ int main(int argc, char **argv)
             else {
                 fprintf(stderr, "ERROR: unknown mode '%s' (use 'dma' or 'blocking')\n",
                         optarg);
+                free(cfg.argv_remaining);
                 return 1;
             }
             break;
         case 'T': dma_threshold = atoi(optarg); break;
         case 'P': dma_priority = atoi(optarg); break;
-        case 'h':
         default:
             print_usage(argv[0]);
-            return (opt == 'h') ? 0 : 1;
+            free(cfg.argv_remaining);
+            return 1;
         }
+    }
+
+    if (cfg.help_requested) {
+        print_usage(argv[0]);
+        free(cfg.argv_remaining);
+        return 0;
     }
 
     /* Transfer size must be a multiple of 4 bytes (32-bit words). */
@@ -418,5 +416,6 @@ cleanup:
     pio_sm_unclaim(pio, (uint)sm);
     pio_close(pio);
 
+    free(cfg.argv_remaining);
     return ret;
 }

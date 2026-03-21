@@ -16,7 +16,8 @@ CFLAGS   := -Wall -Wextra -Werror -O2 -std=c11
 LIB_DIR      := ../lib
 LIB_SRCS     := $(LIB_DIR)/benchmark_stats.c \
                 $(LIB_DIR)/benchmark_verify.c \
-                $(LIB_DIR)/benchmark_format.c
+                $(LIB_DIR)/benchmark_format.c \
+                $(LIB_DIR)/benchmark_cli.c
 LIB_CFLAGS   := -I$(LIB_DIR)
 
 # ─── Platform detection ─────────────────────────────────────
@@ -33,7 +34,7 @@ BENCH_LDFLAGS := -lpio -lpthread -lm
 
 throughput_pioloop_piolib: $(BENCH_SRCS) $(LIB_DIR)/pio_loopback.pio.h \
                            $(LIB_DIR)/benchmark_stats.h $(LIB_DIR)/benchmark_verify.h \
-                           $(LIB_DIR)/benchmark_format.h
+                           $(LIB_DIR)/benchmark_format.h $(LIB_DIR)/benchmark_cli.h
 ifeq ($(FORCE_BUILD),1)
 	$(CC) $(BENCH_CFLAGS) -o $@ $(BENCH_SRCS) $(BENCH_LDFLAGS)
 else ifeq ($(IS_RPI5),yes)
