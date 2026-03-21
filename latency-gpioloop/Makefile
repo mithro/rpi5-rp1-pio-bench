@@ -11,8 +11,9 @@ CFLAGS   := -Wall -Wextra -Werror -O2 -std=c11
 
 # Shared library files (from lib/ directory)
 LIB_DIR   := ../lib
-STATS_SRC := $(LIB_DIR)/benchmark_stats.c
-STATS_INC := -I$(LIB_DIR)
+LIB_SRCS  := $(LIB_DIR)/benchmark_stats.c $(LIB_DIR)/benchmark_verify.c \
+             $(LIB_DIR)/benchmark_format.c $(LIB_DIR)/benchmark_cli.c
+LIB_INC   := -I$(LIB_DIR)
 
 # ─── Platform detection ─────────────────────────────────
 IS_RPI5   := $(shell test -e /dev/pio0 && echo yes || echo no)
@@ -24,14 +25,14 @@ IS_AARCH64 := $(shell uname -m | grep -q aarch64 && echo yes || echo no)
 all: latency_gpioloop
 
 # ─── Target: rpi4 (RPi4 measurement binary) ─────────────
-RPi4_SRCS    := latency_gpioloop_rpi4.c $(STATS_SRC)
-RPi4_CFLAGS  := $(CFLAGS) $(STATS_INC) -DPICO_NO_HARDWARE=1
+RPi4_SRCS    := latency_gpioloop_rpi4.c $(LIB_SRCS)
+RPi4_CFLAGS  := $(CFLAGS) $(LIB_INC) -DPICO_NO_HARDWARE=1
 RPi4_LDFLAGS := -lm
 
 .PHONY: rpi4
 rpi4: latency_gpioloop_rpi4
 
-latency_gpioloop_rpi4: $(RPi4_SRCS) common.h $(LIB_DIR)/benchmark_stats.h
+latency_gpioloop_rpi4: $(RPi4_SRCS) common.h $(LIB_DIR)/benchmark_stats.h $(LIB_DIR)/benchmark_cli.h $(LIB_DIR)/benchmark_format.h $(LIB_DIR)/benchmark_verify.h
 ifeq ($(IS_RPI4),yes)
 	$(CC) $(RPi4_CFLAGS) -o $@ $(RPi4_SRCS) $(RPi4_LDFLAGS)
 else ifeq ($(FORCE_BUILD),1)
@@ -43,11 +44,11 @@ else
 endif
 
 # ─── Target: latency_gpioloop (RPi5 PIO latency binary) ──
-RPi5_SRCS    := latency_gpioloop.c $(STATS_SRC)
-RPi5_CFLAGS  := $(CFLAGS) $(STATS_INC) -I/usr/include/piolib
+RPi5_SRCS    := latency_gpioloop.c $(LIB_SRCS)
+RPi5_CFLAGS  := $(CFLAGS) $(LIB_INC) -I/usr/include/piolib
 RPi5_LDFLAGS := -lpio -lpthread -lm
 
-latency_gpioloop: $(RPi5_SRCS) common.h gpio_echo.pio.h edge_detector.pio.h output_driver.pio.h $(LIB_DIR)/benchmark_stats.h
+latency_gpioloop: $(RPi5_SRCS) common.h gpio_echo.pio.h edge_detector.pio.h output_driver.pio.h $(LIB_DIR)/benchmark_stats.h $(LIB_DIR)/benchmark_cli.h $(LIB_DIR)/benchmark_format.h $(LIB_DIR)/benchmark_verify.h
 ifeq ($(IS_RPI5),yes)
 	$(CC) $(RPi5_CFLAGS) -o $@ $(RPi5_SRCS) $(RPi5_LDFLAGS)
 else ifeq ($(FORCE_BUILD),1)

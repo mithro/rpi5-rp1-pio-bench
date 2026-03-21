@@ -31,6 +31,8 @@
 #include "edge_detector.pio.h"
 #include "output_driver.pio.h"
 #include "common.h"
+#include "benchmark_cli.h"
+#include "benchmark_format.h"
 
 /* ─── Signal handling for L0 mode ──────────────────────────── */
 
@@ -685,16 +687,12 @@ static void print_usage(const char *prog)
         "RPi5 PIO latency benchmark — measures round-trip GPIO latency\n"
         "through various RP1 PIO abstraction layers.\n"
         "\n"
-        "Options:\n"
+        "Benchmark-specific options:\n"
         "  --test=MODE        Test mode: L0, L1, L2, L3 (default: L0)\n"
         "  --input-pin=N      Input GPIO pin number (default: %d)\n"
         "  --output-pin=N     Output GPIO pin number (default: %d)\n"
-        "  --iterations=N     Number of measured iterations (default: %d)\n"
-        "  --warmup=N         Warmup iterations before measurement (default: %d)\n"
         "  --rt-priority=N    Set SCHED_FIFO real-time priority (1-99)\n"
         "  --cpu=N            Pin process to CPU core N\n"
-        "  --json             Output results as JSON\n"
-        "  --help             Show this help message\n"
         "\n"
         "Test modes:\n"
         "  L0  PIO-only echo (hardware baseline, runs until Ctrl-C)\n"
@@ -703,9 +701,8 @@ static void print_usage(const char *prog)
         "  L3  Batched DMA throughput (4KB reads, standalone)\n",
         prog,
         DEFAULT_STIMULUS_PIN,
-        DEFAULT_RESPONSE_PIN,
-        DEFAULT_ITERATIONS,
-        DEFAULT_WARMUP);
+        DEFAULT_RESPONSE_PIN);
+    benchmark_cli_print_common_help();
 }
 
 /* ─── Command-line option parsing ──────────────────────────── */
@@ -723,33 +720,40 @@ static int parse_test_mode(const char *arg)
 
 int main(int argc, char **argv)
 {
-    /* Default parameters. */
+    /* Parse common flags (--iterations, --warmup, --json, --help, etc.) */
+    benchmark_config_t cfg = benchmark_cli_parse(argc, argv);
+
+    if (cfg.help_requested) {
+        print_usage(argv[0]);
+        return 0;
+    }
+
+    /* Map common config to local variables. */
+    int iterations   = cfg.iterations;
+    int warmup       = cfg.warmup;
+    int json_output  = cfg.json_output;
+
+    /* Default benchmark-specific parameters. */
     int test_mode    = TEST_L0;
     int input_pin    = DEFAULT_STIMULUS_PIN;
     int output_pin   = DEFAULT_RESPONSE_PIN;
-    int iterations   = DEFAULT_ITERATIONS;
-    int warmup       = DEFAULT_WARMUP;
     int rt_priority  = 0;
     int cpu_affinity = -1;
-    int json_output  = 0;
 
-    /* Parse command-line options. */
+    /* Parse benchmark-specific options from remaining args. */
     static struct option long_options[] = {
         {"test",        required_argument, NULL, 't'},
         {"input-pin",   required_argument, NULL, 'I'},
         {"output-pin",  required_argument, NULL, 'O'},
-        {"iterations",  required_argument, NULL, 'i'},
-        {"warmup",      required_argument, NULL, 'w'},
         {"rt-priority", required_argument, NULL, 'r'},
         {"cpu",         required_argument, NULL, 'c'},
-        {"json",        no_argument,       NULL, 'j'},
-        {"help",        no_argument,       NULL, 'h'},
         {NULL, 0, NULL, 0}
     };
 
+    optind = 1;  /* Reset getopt for second pass */
     int opt;
-    while ((opt = getopt_long(argc, argv, "t:I:O:i:w:r:c:jh",
-                              long_options, NULL)) != -1) {
+    while ((opt = getopt_long(cfg.argc_remaining, cfg.argv_remaining,
+                              "t:I:O:r:c:", long_options, NULL)) != -1) {
         switch (opt) {
         case 't': {
             int mode = parse_test_mode(optarg);
@@ -763,14 +767,8 @@ int main(int argc, char **argv)
         }
         case 'I': input_pin = atoi(optarg); break;
         case 'O': output_pin = atoi(optarg); break;
-        case 'i': iterations = atoi(optarg); break;
-        case 'w': warmup = atoi(optarg); break;
         case 'r': rt_priority = atoi(optarg); break;
         case 'c': cpu_affinity = atoi(optarg); break;
-        case 'j': json_output = 1; break;
-        case 'h':
-            print_usage(argv[0]);
-            return 0;
         default:
             print_usage(argv[0]);
             return 1;
@@ -778,14 +776,6 @@ int main(int argc, char **argv)
     }
 
     /* Validate parameters. */
-    if (iterations < 1) {
-        fprintf(stderr, "ERROR: iterations must be >= 1\n");
-        return 1;
-    }
-    if (warmup < 0) {
-        fprintf(stderr, "ERROR: warmup must be >= 0\n");
-        return 1;
-    }
     if (input_pin == output_pin) {
         fprintf(stderr, "ERROR: input and output pins must be different\n");
         return 1;
