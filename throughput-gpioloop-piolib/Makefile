@@ -12,7 +12,8 @@ CFLAGS   := -Wall -Wextra -Werror -O2 -std=c11
 
 # Shared library files (from lib/ directory)
 LIB_DIR      := ../lib
-LIB_SRCS     := $(LIB_DIR)/benchmark_stats.c \
+LIB_SRCS     := $(LIB_DIR)/benchmark_cli.c \
+                $(LIB_DIR)/benchmark_stats.c \
                 $(LIB_DIR)/benchmark_verify.c \
                 $(LIB_DIR)/benchmark_format.c
 LIB_CFLAGS   := -I$(LIB_DIR)
@@ -30,6 +31,7 @@ all: throughput_gpioloop_piolib
 
 # ─── Target: throughput_gpioloop_piolib (RPi5 only) ──────────
 throughput_gpioloop_piolib: $(SRCS) gpio_loopback.pio.h \
+               $(LIB_DIR)/benchmark_cli.h \
                $(LIB_DIR)/benchmark_stats.h $(LIB_DIR)/benchmark_verify.h \
                $(LIB_DIR)/benchmark_format.h
 ifeq ($(FORCE_BUILD),1)

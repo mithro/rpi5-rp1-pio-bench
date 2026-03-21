@@ -38,6 +38,7 @@
 #include "piolib.h"
 #include "gpio_loopback.pio.h"
 
+#include "benchmark_cli.h"
 #include "benchmark_format.h"
 #include "benchmark_stats.h"
 #include "benchmark_verify.h"
@@ -186,25 +187,19 @@ static void print_usage(const char *prog)
         "read back via the GPIO input synchroniser, verify integrity.\n"
         "Default: single-pin loopback (same pin for output and input).\n"
         "\n"
-        "Options:\n"
+        "Benchmark-specific options:\n"
         "  --size=BYTES       Source data size per iteration (default %d)\n"
-        "  --iterations=N     Number of measured iterations (default %d)\n"
-        "  --warmup=N         Warmup iterations (default %d)\n"
         "  --pattern=ID       Test pattern: 0=seq, 1=ones, 2=alt, 3=random (default %d)\n"
         "  --threshold=MB/S   Pass/fail threshold (default %.1f)\n"
-        "  --json             Output JSON\n"
-        "  --no-verify        Skip data verification\n"
         "  --output-pin=N     GPIO pin for output (default %d)\n"
-        "  --input-pin=N      GPIO pin for input (default %d)\n"
-        "  --help             Show this help\n",
+        "  --input-pin=N      GPIO pin for input (default %d)\n",
         prog,
         DEFAULT_SOURCE_SIZE,
-        DEFAULT_ITERATIONS,
-        DEFAULT_WARMUP,
         DEFAULT_PATTERN,
         DEFAULT_THRESHOLD_MBPS,
         DEFAULT_OUTPUT_PIN,
         DEFAULT_INPUT_PIN);
+    benchmark_cli_print_common_help();
 }
 
 /* ─── Main ─────────────────────────────────────────────────── */
@@ -213,50 +208,51 @@ int main(int argc, char **argv)
 {
     int ret = 0;
 
-    /* Default parameters */
+    /* Parse common CLI flags (--iterations, --warmup, --json, etc.) */
+    benchmark_config_t cfg = benchmark_cli_parse(argc, argv);
+
+    /* Map common flags to local variables */
+    int iterations = cfg.iterations;
+    int warmup = cfg.warmup;
+    int json_output = cfg.json_output;
+    int no_verify = cfg.no_verify;
+
+    /* Default benchmark-specific parameters */
     size_t source_size = DEFAULT_SOURCE_SIZE;
-    int iterations = DEFAULT_ITERATIONS;
-    int warmup = DEFAULT_WARMUP;
     int pattern = DEFAULT_PATTERN;
     double threshold = DEFAULT_THRESHOLD_MBPS;
-    int json_output = 0;
-    int no_verify = 0;
     int output_pin = DEFAULT_OUTPUT_PIN;
     int input_pin = DEFAULT_INPUT_PIN;
 
-    /* Parse command-line options */
+    /* Parse benchmark-specific options from remaining args */
     static struct option long_options[] = {
         {"size",       required_argument, NULL, 's'},
-        {"iterations", required_argument, NULL, 'i'},
-        {"warmup",     required_argument, NULL, 'w'},
         {"pattern",    required_argument, NULL, 'p'},
         {"threshold",  required_argument, NULL, 't'},
-        {"json",       no_argument,       NULL, 'j'},
-        {"no-verify",  no_argument,       NULL, 'n'},
         {"output-pin", required_argument, NULL, 'o'},
         {"input-pin",  required_argument, NULL, 'I'},
-        {"help",       no_argument,       NULL, 'h'},
         {NULL, 0, NULL, 0}
     };
 
+    optind = 1;
     int opt;
-    while ((opt = getopt_long(argc, argv, "s:i:w:p:t:jno:I:h",
-                              long_options, NULL)) != -1) {
+    while ((opt = getopt_long(cfg.argc_remaining, cfg.argv_remaining,
+                              "s:p:t:o:I:", long_options, NULL)) != -1) {
         switch (opt) {
         case 's': source_size = (size_t)atol(optarg); break;
-        case 'i': iterations = atoi(optarg); break;
-        case 'w': warmup = atoi(optarg); break;
         case 'p': pattern = atoi(optarg); break;
         case 't': threshold = atof(optarg); break;
-        case 'j': json_output = 1; break;
-        case 'n': no_verify = 1; break;
         case 'o': output_pin = atoi(optarg); break;
         case 'I': input_pin = atoi(optarg); break;
-        case 'h':
         default:
             print_usage(argv[0]);
-            return (opt == 'h') ? 0 : 1;
+            return 1;
         }
+    }
+
+    if (cfg.help_requested) {
+        print_usage(argv[0]);
+        return 0;
     }
 
     /* Validate */
