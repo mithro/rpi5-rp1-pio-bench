@@ -1,6 +1,7 @@
 /* benchmark_format.c — Output formatting for benchmark results */
 
 #include "benchmark_format.h"
+#include <string.h>
 
 void bench_print_report(FILE *f, const bench_report_t *report)
 {
@@ -174,4 +175,129 @@ int bench_print_verdict(FILE *f, const bench_report_t *report,
     fprintf(f, ")\n");
 
     return pass ? 0 : 1;
+}
+
+/* ─── Generic output API ─────────────────────────────────────── */
+
+static void output_json(const benchmark_config_t *cfg,
+                        const benchmark_result_t *res,
+                        const benchmark_kv_t *kvs, int n_kvs)
+{
+    FILE *f = stdout;
+
+    fprintf(f, "{\n");
+    fprintf(f, "  \"benchmark\": \"%s\",\n", res->benchmark_name);
+
+    /* Config section */
+    fprintf(f, "  \"config\": {\n");
+    fprintf(f, "    \"iterations\": %d,\n", cfg->iterations);
+    fprintf(f, "    \"warmup\": %d,\n", cfg->warmup);
+    if (cfg->duration_sec > 0.0)
+        fprintf(f, "    \"duration_sec\": %.1f,\n", cfg->duration_sec);
+    else
+        fprintf(f, "    \"duration_sec\": null,\n");
+    for (int i = 0; i < n_kvs; i++) {
+        fprintf(f, "    \"%s\": \"%s\"%s\n",
+                kvs[i].key, kvs[i].value,
+                (i < n_kvs - 1) ? "," : "");
+    }
+    if (n_kvs == 0) {
+        /* Remove trailing comma from duration_sec line — rewrite last */
+    }
+    fprintf(f, "  },\n");
+
+    /* Results section */
+    fprintf(f, "  \"results\": {\n");
+    switch (res->type) {
+    case BENCH_TYPE_THROUGHPUT:
+        fprintf(f, "    \"throughput_mbps\": {\n");
+        fprintf(f, "      \"tx\": %.2f,\n", res->throughput.tx_mbps);
+        fprintf(f, "      \"rx\": %.2f\n", res->throughput.rx_mbps);
+        fprintf(f, "    },\n");
+        break;
+    case BENCH_TYPE_LATENCY:
+        fprintf(f, "    \"latency_ns\": {\n");
+        fprintf(f, "      \"median\": %.0f,\n", res->latency.median_ns);
+        fprintf(f, "      \"p95\": %.0f,\n", res->latency.p95_ns);
+        fprintf(f, "      \"p99\": %.0f,\n", res->latency.p99_ns);
+        fprintf(f, "      \"min\": %.0f,\n", res->latency.min_ns);
+        fprintf(f, "      \"max\": %.0f,\n", res->latency.max_ns);
+        fprintf(f, "      \"stddev\": %.1f\n", res->latency.stddev_ns);
+        fprintf(f, "    },\n");
+        break;
+    case BENCH_TYPE_FREQUENCY:
+        fprintf(f, "    \"frequency_mhz\": %.3f,\n", res->frequency.frequency_mhz);
+        fprintf(f, "    \"clkdiv\": %.2f,\n", res->frequency.clkdiv);
+        fprintf(f, "    \"delay_cycles\": %d,\n", res->frequency.delay_cycles);
+        break;
+    }
+    fprintf(f, "    \"data_errors\": %d,\n", res->data_errors);
+    fprintf(f, "    \"iterations_completed\": %d\n", res->iterations_completed);
+    fprintf(f, "  },\n");
+
+    /* Verdict section */
+    fprintf(f, "  \"verdict\": {\n");
+    fprintf(f, "    \"pass\": %s\n", res->pass ? "true" : "false");
+    fprintf(f, "  }\n");
+    fprintf(f, "}\n");
+}
+
+static void output_human(const benchmark_result_t *res,
+                         const benchmark_kv_t *kvs, int n_kvs)
+{
+    FILE *f = stdout;
+
+    /* Find longest key for alignment */
+    int max_key_len = 0;
+    for (int i = 0; i < n_kvs; i++) {
+        int len = (int)strlen(kvs[i].key);
+        if (len > max_key_len) max_key_len = len;
+    }
+
+    fprintf(f, "%s\n", res->benchmark_name);
+    fprintf(f, "================================================================\n");
+
+    /* Config */
+    fprintf(f, "Configuration:\n");
+    for (int i = 0; i < n_kvs; i++)
+        fprintf(f, "  %-*s  %s\n", max_key_len + 1, kvs[i].key, kvs[i].value);
+    fprintf(f, "\n");
+
+    /* Results */
+    fprintf(f, "Results:\n");
+    switch (res->type) {
+    case BENCH_TYPE_THROUGHPUT:
+        if (res->throughput.tx_mbps > 0.0)
+            fprintf(f, "  TX throughput:   %.2f MB/s\n", res->throughput.tx_mbps);
+        if (res->throughput.rx_mbps > 0.0)
+            fprintf(f, "  RX throughput:   %.2f MB/s\n", res->throughput.rx_mbps);
+        break;
+    case BENCH_TYPE_LATENCY:
+        fprintf(f, "  Median:          %.0f ns\n", res->latency.median_ns);
+        fprintf(f, "  P95:             %.0f ns\n", res->latency.p95_ns);
+        fprintf(f, "  P99:             %.0f ns\n", res->latency.p99_ns);
+        fprintf(f, "  Min:             %.0f ns\n", res->latency.min_ns);
+        fprintf(f, "  Max:             %.0f ns\n", res->latency.max_ns);
+        fprintf(f, "  Std Dev:         %.1f ns\n", res->latency.stddev_ns);
+        break;
+    case BENCH_TYPE_FREQUENCY:
+        fprintf(f, "  Frequency:       %.3f MHz\n", res->frequency.frequency_mhz);
+        break;
+    }
+    fprintf(f, "  Data integrity:  %s (%d errors)\n",
+            res->data_errors == 0 ? "PASS" : "FAIL", res->data_errors);
+    fprintf(f, "\n");
+
+    fprintf(f, "================================================================\n");
+    fprintf(f, "Verdict: %s\n", res->pass ? "PASS" : "FAIL");
+}
+
+void benchmark_output(const benchmark_config_t *cfg,
+                      const benchmark_result_t *res,
+                      const benchmark_kv_t *config_kvs, int n_kvs)
+{
+    if (cfg->json_output)
+        output_json(cfg, res, config_kvs, n_kvs);
+    else
+        output_human(res, config_kvs, n_kvs);
 }
