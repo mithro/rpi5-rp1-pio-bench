@@ -5,14 +5,8 @@
  *   Host fills TX buffer in SRAM → Core 1 writes TXF3 (SM3 auto-processes),
  *   reads RXF3, writes to RX buffer → Host verifies RX = ~TX.
  *
- * Build: gcc -Wall -Wextra -O2 -o throughput_pioloop_m3poll throughput_pioloop_m3poll.c -lm
+ * Build: make
  * Run:   sudo ./throughput_pioloop_m3poll [options]
- *
- * Options:
- *   -t SECS   Benchmark duration (default 5)
- *   -v        Enable verify mode (cmd=2)
- *   -p PAT    Pattern: seq, walk, random, fixed (default seq)
- *   -j        JSON output
  */
 
 #define _DEFAULT_SOURCE
@@ -26,12 +20,14 @@
 #include <sys/stat.h>
 #include <sys/ioctl.h>
 #include <time.h>
-#include <getopt.h>
 #include <math.h>
 #include <libgen.h>
 #include <linux/limits.h>
 #include <misc/rp1_pio_if.h>
 #include <piolib/piolib.h>
+
+#include "benchmark_cli.h"
+#include "benchmark_format.h"
 
 /* RP1 PCIe BAR addresses */
 #define BAR1_PHYS   0x1f00000000ULL
@@ -357,31 +353,62 @@ static int launch_core1(int verbose)
     return -1;
 }
 
+static void print_usage(const char *prog)
+{
+    fprintf(stderr,
+        "Usage: %s [options]\n"
+        "\n"
+        "M3 Core 1 SRAM<->FIFO bridge throughput benchmark.\n"
+        "\n"
+        "Benchmark-specific options:\n"
+        "  --verify         Enable verify mode (Core 1 checks data) [default]\n"
+        "  --pattern=PAT    Pattern: seq, walk, random, fixed (default: seq)\n"
+        "  --bench-secs=N   Benchmark duration in seconds (default: 5)\n",
+        prog);
+    benchmark_cli_print_common_help();
+}
+
 int main(int argc, char *argv[])
 {
+    /* Parse common flags first */
+    benchmark_config_t cfg = benchmark_cli_parse(argc, argv);
+
     int bench_secs = 5;
     int verify = 1;
-    int json = 0;
+    int json = cfg.json_output;
     const char *pattern = "seq";
 
-    int opt;
-    while ((opt = getopt(argc, argv, "t:vp:jh")) != -1) {
-        switch (opt) {
-        case 't': bench_secs = atoi(optarg); break;
-        case 'v': verify = 1; break;
-        case 'p': pattern = optarg; break;
-        case 'j': json = 1; break;
-        case 'h':
-        default:
-            fprintf(stderr,
-                "Usage: %s [-t secs] [-v] [-p pattern] [-j]\n"
-                "  -t SECS   Duration (default 5)\n"
-                "  -v        Verify mode (Core 1 checks data)\n"
-                "  -p PAT    Pattern: seq, walk, random, fixed\n"
-                "  -j        JSON output\n",
-                argv[0]);
-            return (opt == 'h') ? 0 : 1;
+    if (cfg.duration_sec > 0.0)
+        bench_secs = (int)(cfg.duration_sec + 0.5);
+
+    if (cfg.no_verify)
+        verify = 0;
+
+    /* Parse benchmark-specific flags from remaining args */
+    for (int i = 1; i < cfg.argc_remaining; i++) {
+        if (strcmp(cfg.argv_remaining[i], "--verify") == 0) {
+            verify = 1;
+        } else if (strncmp(cfg.argv_remaining[i], "--pattern=", 10) == 0) {
+            pattern = cfg.argv_remaining[i] + 10;
+        } else if (strncmp(cfg.argv_remaining[i], "--bench-secs=", 13) == 0) {
+            bench_secs = atoi(cfg.argv_remaining[i] + 13);
+            if (bench_secs < 1) {
+                fprintf(stderr, "ERROR: --bench-secs must be >= 1\n");
+                free(cfg.argv_remaining);
+                return 1;
+            }
+        } else {
+            fprintf(stderr, "Unknown option: %s\n", cfg.argv_remaining[i]);
+            print_usage(argv[0]);
+            free(cfg.argv_remaining);
+            return 1;
         }
+    }
+
+    if (cfg.help_requested) {
+        print_usage(argv[0]);
+        free(cfg.argv_remaining);
+        return 0;
     }
 
     setbuf(stdout, NULL);
@@ -561,6 +588,35 @@ int main(int argc, char *argv[])
         }
     }
 
+    /* Standardized benchmark output */
+    {
+        char dur_buf[32], pat_buf[32], verify_buf[8];
+        snprintf(dur_buf, sizeof(dur_buf), "%d s", bench_secs);
+        snprintf(pat_buf, sizeof(pat_buf), "%s", pattern);
+        snprintf(verify_buf, sizeof(verify_buf), "%s", verify ? "yes" : "no");
+
+        benchmark_kv_t kvs[] = {
+            {"pattern",  pat_buf},
+            {"verify",   verify_buf},
+            {"duration", dur_buf},
+        };
+
+        benchmark_result_t res = {
+            .type = BENCH_TYPE_THROUGHPUT,
+            .benchmark_name = "throughput-pioloop-m3poll",
+            .iterations_completed = (int)c1_passes,
+            .data_errors = (int)c1_errors + host_errors,
+            .pass = pass,
+            .throughput = {
+                .tx_mbps = throughput / 1e6,
+                .rx_mbps = throughput / 1e6,
+            },
+        };
+
+        benchmark_output(&cfg, &res, kvs, sizeof(kvs) / sizeof(kvs[0]));
+    }
+
     free(rates);
+    free(cfg.argv_remaining);
     return pass ? 0 : 1;
 }

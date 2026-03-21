@@ -12,10 +12,18 @@
 AS       := arm-none-eabi-as
 LD       := arm-none-eabi-ld
 OBJCOPY  := arm-none-eabi-objcopy
-CC       := gcc
+CC       ?= gcc
 
 ASFLAGS  := -mcpu=cortex-m3 -mthumb
 CFLAGS   := -Wall -Wextra -Werror -O2 -std=c11
+
+# Shared library files (from lib/ directory)
+LIB_DIR      := ../lib
+LIB_SRCS     := $(LIB_DIR)/benchmark_stats.c \
+                $(LIB_DIR)/benchmark_verify.c \
+                $(LIB_DIR)/benchmark_format.c \
+                $(LIB_DIR)/benchmark_cli.c
+LIB_CFLAGS   := -I$(LIB_DIR)
 
 .PHONY: all firmware clean
 
@@ -39,8 +47,8 @@ firmware: $(FIRMWARE_BINS)
 core1_launcher: core1_launcher.c
 	$(CC) $(CFLAGS) -o $@ $< -lm
 
-throughput_pioloop_m3poll: throughput_pioloop_m3poll.c
-	$(CC) $(CFLAGS) -I/usr/include/piolib -o $@ $< -lm -lpio
+throughput_pioloop_m3poll: throughput_pioloop_m3poll.c $(LIB_SRCS)
+	$(CC) $(CFLAGS) $(LIB_CFLAGS) -I/usr/include/piolib -o $@ throughput_pioloop_m3poll.c $(LIB_SRCS) -lm -lpio
 
 # ─── Clean ─────────────────────────────────────────────────
 clean:
