@@ -9,6 +9,14 @@
 CC       ?= gcc
 CFLAGS   := -Wall -Wextra -Werror -O2 -std=c11
 
+# Shared library files (from lib/ directory)
+LIB_DIR      := ../lib
+LIB_SRCS     := $(LIB_DIR)/benchmark_stats.c \
+                $(LIB_DIR)/benchmark_verify.c \
+                $(LIB_DIR)/benchmark_format.c \
+                $(LIB_DIR)/benchmark_cli.c
+LIB_CFLAGS   := -I$(LIB_DIR)
+
 # ─── Platform detection ─────────────────────────────────
 IS_RPI5   := $(shell test -e /dev/pio0 && echo yes || echo no)
 IS_RPI4   := $(shell test -e /dev/gpiomem && ! test -e /dev/pio0 && echo yes || echo no)
@@ -37,8 +45,8 @@ else
 endif
 
 # ─── Target: frequency_gpiotoggle (RPi5 PIO toggle) ──────
-RPi5_SRCS    := frequency_gpiotoggle.c
-RPi5_CFLAGS  := $(CFLAGS) -I/usr/include/piolib
+RPi5_SRCS    := frequency_gpiotoggle.c $(LIB_SRCS)
+RPi5_CFLAGS  := $(CFLAGS) $(LIB_CFLAGS) -I/usr/include/piolib
 RPi5_LDFLAGS := -lpio -lm
 
 frequency_gpiotoggle: $(RPi5_SRCS) common.h gpio_toggle.pio.h

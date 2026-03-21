@@ -1,4 +1,4 @@
-/* toggle_rpi5.c — RPi5 PIO toggle frequency generator
+/* frequency_gpiotoggle.c — RPi5 PIO toggle frequency generator
  *
  * Loads a 2-instruction PIO toggle program on RP1 and runs it for a
  * configurable duration. The output pin toggles at:
@@ -9,8 +9,8 @@
  *
  * Requires RPi5 with libpio-dev installed and root privileges (/dev/pio0).
  *
- * Build: see Makefile (make rpi5)
- * Run:   sudo ./toggle_rpi5 [options]
+ * Build: make
+ * Run:   sudo ./frequency_gpiotoggle [options]
  */
 
 #define _GNU_SOURCE
@@ -27,6 +27,9 @@
 #include "hardware/clocks.h"
 #include "gpio_toggle.pio.h"
 #include "common.h"
+
+#include "benchmark_cli.h"
+#include "benchmark_format.h"
 
 /* ─── Signal handling ──────────────────────────────────────── */
 
@@ -69,48 +72,52 @@ static void print_usage(const char *prog)
         "\n"
         "PIO toggle frequency generator for RP1.\n"
         "\n"
-        "Options:\n"
+        "Benchmark-specific options:\n"
         "  --pin N          GPIO pin to toggle (default: %d)\n"
         "  --clkdiv F       PIO clock divider, >= 1.0 (default: 1.0)\n"
         "  --delay N        Instruction delay cycles, 0-31 (default: 0)\n"
-        "  --duration-ms N  Duration in milliseconds (default: %d)\n"
-        "  --json           Output configuration as JSON to stdout\n"
-        "  --help           Show this help\n",
+        "  --duration-ms N  Duration in milliseconds (default: %d)\n",
         prog, DEFAULT_TOGGLE_PIN, DEFAULT_DURATION_MS);
+    benchmark_cli_print_common_help();
 }
 
 /* ─── Main ─────────────────────────────────────────────────── */
 
 int main(int argc, char **argv)
 {
+    /* Parse common flags first */
+    benchmark_config_t cfg = benchmark_cli_parse(argc, argv);
+
     int pin         = DEFAULT_TOGGLE_PIN;
     float clkdiv    = 1.0f;
     int delay       = 0;
     int duration_ms = DEFAULT_DURATION_MS;
-    int json_output = 0;
 
+    /* Parse benchmark-specific flags from remaining args */
     static struct option long_options[] = {
         {"pin",         required_argument, NULL, 'p'},
         {"clkdiv",      required_argument, NULL, 'd'},
         {"delay",       required_argument, NULL, 'D'},
         {"duration-ms", required_argument, NULL, 't'},
-        {"json",        no_argument,       NULL, 'j'},
-        {"help",        no_argument,       NULL, 'h'},
         {NULL, 0, NULL, 0}
     };
 
+    optind = 1; /* reset getopt for second pass */
     int opt;
-    while ((opt = getopt_long(argc, argv, "p:d:D:t:jh",
-                               long_options, NULL)) != -1) {
+    while ((opt = getopt_long(cfg.argc_remaining, cfg.argv_remaining,
+                               "p:d:D:t:", long_options, NULL)) != -1) {
         switch (opt) {
         case 'p': pin = atoi(optarg); break;
         case 'd': clkdiv = strtof(optarg, NULL); break;
         case 'D': delay = atoi(optarg); break;
         case 't': duration_ms = atoi(optarg); break;
-        case 'j': json_output = 1; break;
-        case 'h': print_usage(argv[0]); return 0;
         default:  print_usage(argv[0]); return 1;
         }
+    }
+
+    if (cfg.help_requested) {
+        print_usage(argv[0]);
+        return 0;
     }
 
     /* Validate parameters. */
@@ -132,6 +139,8 @@ int main(int argc, char **argv)
                 duration_ms);
         return 1;
     }
+
+    /* ─── Setup ──────────────────────────────────────────────── */
 
     /* Install SIGINT handler for clean shutdown. */
     struct sigaction sa;
@@ -209,28 +218,10 @@ int main(int argc, char **argv)
     /* Initialise state machine (does NOT enable yet). */
     pio_sm_init(pio, (uint)sm, offset, &c);
 
-    /* Start toggling. */
+    /* ─── Run ────────────────────────────────────────────────── */
+
     fprintf(stderr, "Starting PIO toggle on GPIO%d...\n", pin);
     pio_sm_set_enabled(pio, (uint)sm, true);
-
-    /* Output JSON immediately so orchestrator knows we're running. */
-    if (json_output) {
-        printf("{\n"
-               "  \"benchmark\": \"rp1-pio-toggle-freq\",\n"
-               "  \"device\": \"rpi5\",\n"
-               "  \"config\": {\n"
-               "    \"pin\": %d,\n"
-               "    \"clkdiv\": %.2f,\n"
-               "    \"delay\": %d,\n"
-               "    \"duration_ms\": %d,\n"
-               "    \"sys_clk_hz\": %u,\n"
-               "    \"expected_freq_hz\": %.1f\n"
-               "  },\n"
-               "  \"status\": \"running\"\n"
-               "}\n", pin, (double)clkdiv, delay, duration_ms,
-               sys_clk_hz, expected_freq);
-        fflush(stdout);
-    }
 
     /* Run for the specified duration. */
     uint64_t start_ns = get_time_ns();
@@ -242,7 +233,8 @@ int main(int argc, char **argv)
             break;
     }
 
-    /* Stop and clean up. */
+    /* ─── Teardown ───────────────────────────────────────────── */
+
     pio_sm_set_enabled(pio, (uint)sm, false);
 
     /* Drive pin LOW before releasing. */
@@ -257,5 +249,38 @@ int main(int argc, char **argv)
     fprintf(stderr, "Toggle stopped after %llu ms.\n",
             (unsigned long long)(actual_ns / 1000000ULL));
 
+    /* ─── Output ─────────────────────────────────────────────── */
+
+    char pin_buf[8], clkdiv_buf[16], delay_buf[8], dur_buf[16], freq_buf[64];
+    snprintf(pin_buf, sizeof(pin_buf), "%d", pin);
+    snprintf(clkdiv_buf, sizeof(clkdiv_buf), "%.2f", (double)clkdiv);
+    snprintf(delay_buf, sizeof(delay_buf), "%d", delay);
+    snprintf(dur_buf, sizeof(dur_buf), "%d ms", duration_ms);
+    snprintf(freq_buf, sizeof(freq_buf), "%.3f MHz", expected_freq / 1e6);
+
+    benchmark_kv_t kvs[] = {
+        {"pin",            pin_buf},
+        {"clkdiv",         clkdiv_buf},
+        {"delay_cycles",   delay_buf},
+        {"duration",       dur_buf},
+        {"expected_freq",  freq_buf},
+    };
+
+    benchmark_result_t res = {
+        .type = BENCH_TYPE_FREQUENCY,
+        .benchmark_name = "frequency-gpiotoggle",
+        .iterations_completed = 1,
+        .data_errors = 0,
+        .pass = 1,
+        .frequency = {
+            .frequency_mhz = expected_freq / 1e6,
+            .clkdiv = (double)clkdiv,
+            .delay_cycles = delay,
+        },
+    };
+
+    benchmark_output(&cfg, &res, kvs, sizeof(kvs) / sizeof(kvs[0]));
+
+    free(cfg.argv_remaining);
     return 0;
 }
