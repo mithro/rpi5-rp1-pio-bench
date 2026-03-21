@@ -89,9 +89,7 @@ jobs:
 
       - name: Build throughput-pioloop-m3poll host tools
         working-directory: throughput-pioloop-m3poll
-        run: |
-          gcc -Wall -Wextra -Werror -O2 -std=c11 -o core1_launcher core1_launcher.c -lm
-          gcc -Wall -Wextra -Werror -O2 -std=c11 -I/usr/include/piolib -o throughput_pioloop_m3poll throughput_pioloop_m3poll.c -lm -lpio
+        run: make core1_launcher throughput_pioloop_m3poll
 
       - name: Upload binaries
         uses: actions/upload-artifact@v4
